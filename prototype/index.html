@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#f6f2e7">
+  <title>双轨 · 校园手账</title>
+  <link rel="icon" href="assets/books.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="style.css">
+  <script src="app.js" defer></script>
+</head>
+<body>
+  <div class="desktop-note" aria-hidden="true">双轨 <span>校园手账 · 可点击原型</span></div>
+  <div class="phone" id="phone">
+    <div class="statusbar" aria-hidden="true"><b>9:30</b><span class="status-icons">▂▃▅ <svg viewBox="0 0 24 16"><path d="M2 5Q12-3 22 5M6 9q6-5 12 0M10 13q2-2 4 0"/></svg><span class="battery"></span></span></div>
+    <header id="topbar"></header>
+    <main id="screen" tabindex="-1"></main>
+    <nav id="tabbar" aria-label="主导航"></nav>
+    <div id="toast" role="status" aria-live="polite"></div>
+    <dialog id="dialog" aria-labelledby="dialog-title"></dialog>
+  </div>
+</body>
+</html>
