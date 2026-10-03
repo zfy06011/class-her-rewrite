@@ -3,10 +3,10 @@
 更新：2026-10-02（已新增 Android 接入验证源码和 CI，并修正无 form 页面的获取与网格边界，尚未云端编译，见第 15 节）。
 
 - 当前任务：按开发流程推进首版个人课表；先完成最小 Android 学校登录／直接获取／解析预览验证，再推进正式数据库与页面。
-- 确认状态：需求、原生技术栈、AD-1～AD-12 与网页原型范围沿用已确认内容；用户 `/goal 按开发流程开发项目，卡住的可以先跳过` 授权继续开发；后续“自己创建仓库”已授权创建私有新仓库。拟推送到 `work/android-probe`，等待该次推送确认；正式包名、试用签名连续性和完整 UI 方案仍待确认。
+- 确认状态：需求、原生技术栈、AD-1～AD-12 与网页原型范围沿用已确认内容；用户授权持续开发、创建新仓库并改为公开。仓库现为 Public；拟推送到 `work/android-probe`，等待该次推送确认。正式包名、试用签名连续性和完整 UI 方案仍待确认。
 - 当前执行者：Codex（2026-10-02）。本轮已实测可读写目录、执行 pwsh／Python／Node、读取公开 GitHub API 与依赖仓库；`gh` 不在 PATH，未验证账号推送权限。此前学校电脑浏览器验证见第 12 节；本轮续执行只在内存核对既有私人样本的结构，输出字段数量、网格形状和固定表头，没有输出账号／课程内容，没有读取浏览器会话或创建私人数据文件。未安装或运行本地 Android 构建工具链。
-- 目标分支／基准提交：本地及拟推送分支 `work/android-probe`；代码基准 `eb37e03e1bcdcb58974f4fdc95f96fde26ea8bd0`（后续仅补交接记录）。私有远端 `https://github.com/zfy06011/class-her-rewrite` 已创建并配置 origin。首次推送仍待用户确认，尚无远端 CI run 或 APK。
-- 进展：最小验证工程、WebView 会话获取、Kotlin 解析、日期／调课／三方字段合并／今日列表计算规则及相关单测源码已写入；本地 Python／JS 检查与 Kotlin 语法／XML／YAML 检查通过。私有远端已创建并读取核对为空仓库，等待首次推送确认；Android 编译、Kotlin 单测执行、学校真机闭环与会话持久性未验证。
+- 目标分支／基准提交：本地及拟推送分支 `work/android-probe`；代码基准 `eb37e03e1bcdcb58974f4fdc95f96fde26ea8bd0`（后续仅补交接记录）。远端 `https://github.com/zfy06011/class-her-rewrite` 已创建并改为公开，origin 已配置。首次推送仍待用户确认，尚无远端 CI run 或 APK。
+- 进展：最小验证工程、WebView 会话获取、Kotlin 解析、日期／调课／三方字段合并／今日列表计算规则及相关单测源码已写入；本地 Python／JS 检查与 Kotlin 语法／XML／YAML 检查通过。远端公开状态已通过 GitHub API 和页面确认，仍为空仓库，等待首次推送确认；Android 编译、Kotlin 单测执行、学校真机闭环与会话持久性未验证。
 - 文档约定：本文件是唯一当前交接文档。第 8～11 节为验证历史，第 12 节为电脑直接获取记录，第 14 节为网页原型结果；当前开发状态以顶部与第 15 节为准。`../重写参考.md` 当前工作区不存在。
 
 ## 1. 已确认的首版需求
@@ -489,7 +489,14 @@ GitHub Actions 的第三方步骤固定到本轮 GitHub API 核对的提交 SHA�
 
 ### 15.10 用户授权创建私有 GitHub 仓库
 
-- 用户明确要求“自己创建仓库”，并指定已登录的 GitHub Dashboard 浏览器页。已通过该页创建 [zfy06011/class-her-rewrite](https://github.com/zfy06011/class-her-rewrite)，页面显示 **Private** 与空仓库 Quick setup；未勾选初始化 README／gitignore／license，避免生成与本地冲突的历史。没有添加协作者或改变既有访问权限。
+- 用户明确要求“自己创建仓库”，并指定已登录的 GitHub Dashboard 浏览器页。最初通过该页创建 [zfy06011/class-her-rewrite](https://github.com/zfy06011/class-her-rewrite)，当时页面显示 **Private** 与空仓库 Quick setup；后续按用户要求改为公开，见第 15.11 节。未勾选初始化 README／gitignore／license，避免生成与本地冲突的历史，没有添加协作者。
 - GitHub connector 核对：仓库 ID `1401831010`、visibility `private`、size `0`、当前账号拥有 pull／push 权限。本地 `git ls-remote origin` 成功返回空，尚无已存在的远端提交／分支，不将读取权限或页面登录状态写成推送成功。
 - 本地 origin 已设为 `https://github.com/zfy06011/class-her-rewrite.git`，拟首次推送 `work/android-probe`；用户的创建仓库授权不自动代替项目规则要求的每次推送确认。首次推送会触发 `Android probe / Verify and build probe`，运行 parser／JS 检查、36 个 Kotlin 测试、Android lint 和 debug APK 构建。
 - 仓库结果截图仅放忽略目录 `.verify-tmp/repository-created.jpg`，不作为源码提交。创建仓库阻塞已解除，当前等待首次推送确认；尚未推送、运行 CI 或生成 APK。本地作者配置沿用，未复制浏览器 Cookie／令牌。
+
+### 15.11 用户要求改为公开：已完成
+
+- 用户要求“设置为公开仓库试试”，授权把 `zfy06011/class-her-rewrite` 改为 public。修改前 GitHub API 显示 private／size 0，`git ls-remote origin` 仍为空；没有已推送课程或源码被公开。
+- 已在该仓库 Settings → Change visibility → Change to public 走完公开确认按钮；GitHub 最初转到 `Confirm access`（sudo mode），由用户本人完成重新认证并回复“已验证”。随后设置页面显示 `This repository is currently public`；本轮 GitHub API 返回 `visibility: public`、`size: 0`，结果页显示 **Public** 与空仓库 Quick setup，修改已生效。
+- 原 Edge 浏览器连接在工具更新后不可用，已用 Codex 内置浏览器打开公开结果页并保留；结果截图放在忽略目录 `.verify-tmp/repository-public.jpg`，不提交截图或认证数据。
+- 认证前本地 HEAD 为 `46cd8b51d1a23979244ca8e05753bf6109eb2cdd`；本轮仅更新并提交此 HANDOFF 的状态，不改 Android／原型／验证源码，无须重做未变化的检查。之后的准确待推送 SHA 以 `git rev-parse HEAD` 为准；首次推送确认需明确远端现在公开，源码和后续 CI 日志可公开访问。尚无推送或 CI。
