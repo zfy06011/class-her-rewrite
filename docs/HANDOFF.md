@@ -5,7 +5,7 @@
 - 当前任务：按开发流程推进首版个人课表；先完成最小 Android 学校登录／直接获取／解析预览验证，再推进正式数据库与页面。
 - 确认状态：需求、原生技术栈、AD-1～AD-12 与网页原型范围沿用已确认内容；用户授权持续开发、创建新仓库并改为公开。仓库现为 Public；拟推送到 `work/android-probe`，等待该次推送确认。正式包名、试用签名连续性和完整 UI 方案仍待确认。
 - 当前执行者：Codex（2026-10-02）。本轮已实测可读写目录、执行 pwsh／Python／Node、读取公开 GitHub API 与依赖仓库；`gh` 不在 PATH，未验证账号推送权限。此前学校电脑浏览器验证见第 12 节；本轮续执行只在内存核对既有私人样本的结构，输出字段数量、网格形状和固定表头，没有输出账号／课程内容，没有读取浏览器会话或创建私人数据文件。未安装或运行本地 Android 构建工具链。
-- 目标分支／基准提交：本地及拟推送分支 `work/android-probe`；代码基准 `eb37e03e1bcdcb58974f4fdc95f96fde26ea8bd0`（后续仅补交接记录）。远端 `https://github.com/zfy06011/class-her-rewrite` 已创建并改为公开，origin 已配置。首次推送仍待用户确认，尚无远端 CI run 或 APK。
+- 目标分支／基准提交：本地及拟推送分支 `work/android-probe`；代码基准 `190f6fadc71d1978788cce6b6c3c39e093cf5228`（公开前替换提交邮箱，文件树不变；后续仅补交接记录）。远端 `https://github.com/zfy06011/class-her-rewrite` 已创建并改为公开，origin 已配置。首次推送仍待用户确认，尚无远端 CI run 或 APK。
 - 进展：最小验证工程、WebView 会话获取、Kotlin 解析、日期／调课／三方字段合并／今日列表计算规则及相关单测源码已写入；本地 Python／JS 检查与 Kotlin 语法／XML／YAML 检查通过。远端公开状态已通过 GitHub API 和页面确认，仍为空仓库，等待首次推送确认；Android 编译、Kotlin 单测执行、学校真机闭环与会话持久性未验证。
 - 文档约定：本文件是唯一当前交接文档。第 8～11 节为验证历史，第 12 节为电脑直接获取记录，第 14 节为网页原型结果；当前开发状态以顶部与第 15 节为准。`../重写参考.md` 当前工作区不存在。
 
@@ -448,7 +448,7 @@ GitHub Actions 的第三方步骤固定到本轮 GitHub API 核对的提交 SHA�
 - **静态通过**：tree-sitter Kotlin 语法检查、全部 Android XML 解析及工作流 YAML 结构检查；未发现原生 JS bridge、Cookie 读取、私密日志或破坏性数据库迁移调用。静态语法检查不验证 Kotlin 类型、依赖解析、Compose／Hilt 生成或运行行为。
 - **已写、未执行**：5 个 Kotlin 单测类，36 个测试方法，涵盖周次边界、节次分段、跨周调课、停课、时间边界、6 小时策略、失败退避、失效、身份不一致、异常响应、合并单元格、双列时间栏、额外列／越界跨度、解析疑点、三方字段比较、旧冲突失效及今日／下一次课程计算。只能由云端构建执行，不将“存在测试源码”写成“测试通过”。
 - **未检查／阻塞**：Android 编译与 lint、Kotlin 单测、真机视觉／字体缩放、WebView 实际登录／框架适配、Android 会话持久性及自然过期、真实 6 小时检查、网络与取消的手机行为。无 APK 可安装，不能交付“可用 Android 应用”。原生主题只做系统深浅切换，完整的手动主题设置留待正式 UI。
-- **提交状态**：首个本地源码提交 `eb37e03e1bcdcb58974f4fdc95f96fde26ea8bd0` 已完成，后续只补交接记录；无远端推送。原有 parser 与原型源码本轮没有改动，只纳入完整运行入口；没有独立验收文档。
+- **提交状态**：首个本地源码提交经公开前邮箱处理后为 `190f6fadc71d1978788cce6b6c3c39e093cf5228`，后续只补交接记录；无远端推送。原有 parser 与原型源码本轮没有改动，只纳入完整运行入口；没有独立验收文档。
 
 ### 15.5 接续步骤与跳过项
 
@@ -485,7 +485,7 @@ GitHub Actions 的第三方步骤固定到本轮 GitHub API 核对的提交 SHA�
 
 - 初始化本地 `work/android-probe` 分支，使用既有 Git 作者配置。此前因远端未知而停止本地版本记录过早，本次补足可独立完成的源码整理；随后按用户新授权创建私有远端，结果见第 15.10 节。
 - 首次提交明确列出 Android 源码／测试、构建与 CI、Gradle Wrapper、规则与 HANDOFF、已有网页原型源码和两个验证程序。已有公共 HTML 研究样本、参考图和截图不属于本次构建的必要源码，先保留在工作区，不扫入提交；私人 `.verify-tmp/`、Python 缓存、APK、签名及本地配置必须被忽略。
-- `git check-ignore` 已确认私人样本、APK 输出路径和 Python 缓存受忽略规则保护。41 个明确路径的暂存清单及 `git diff --cached --check` 通过；扫描未发现私人密钥、GitHub token 或实际学号参数。源码已提交为 `eb37e03e1bcdcb58974f4fdc95f96fde26ea8bd0`；不表示 Android 编译、单测、学校接入或交付已通过。工作区另有未跟踪的参考图、原型截图和公开 HTML 样本，未删除或混入此提交。
+- `git check-ignore` 已确认私人样本、APK 输出路径和 Python 缓存受忽略规则保护。41 个明确路径的暂存清单及 `git diff --cached --check` 通过；扫描未发现私人密钥、GitHub token 或实际学号参数。源码提交公开前处理邮箱后为 `190f6fadc71d1978788cce6b6c3c39e093cf5228`；不表示 Android 编译、单测、学校接入或交付已通过。工作区另有未跟踪的参考图、原型截图和公开 HTML 样本，未删除或混入此提交。
 
 ### 15.10 用户授权创建私有 GitHub 仓库
 
@@ -500,3 +500,10 @@ GitHub Actions 的第三方步骤固定到本轮 GitHub API 核对的提交 SHA�
 - 已在该仓库 Settings → Change visibility → Change to public 走完公开确认按钮；GitHub 最初转到 `Confirm access`（sudo mode），由用户本人完成重新认证并回复“已验证”。随后设置页面显示 `This repository is currently public`；本轮 GitHub API 返回 `visibility: public`、`size: 0`，结果页显示 **Public** 与空仓库 Quick setup，修改已生效。
 - 原 Edge 浏览器连接在工具更新后不可用，已用 Codex 内置浏览器打开公开结果页并保留；结果截图放在忽略目录 `.verify-tmp/repository-public.jpg`，不提交截图或认证数据。
 - 认证前本地 HEAD 为 `46cd8b51d1a23979244ca8e05753bf6109eb2cdd`；本轮仅更新并提交此 HANDOFF 的状态，不改 Android／原型／验证源码，无须重做未变化的检查。之后的准确待推送 SHA 以 `git rev-parse HEAD` 为准；首次推送确认需明确远端现在公开，源码和后续 CI 日志可公开访问。尚无推送或 CI。
+
+### 15.12 公开前检查：提交邮箱处理
+
+- 检查待推送历史发现一个非 noreply 邮箱，不记录实际地址；跟踪文件中没有私人样本、APK、签名或本地配置。因仓库现在公开，先处理提交元数据，避免推送时连同作者／提交者邮箱公开。
+- 远端核对仍为空，仅本次任务的 3 个未发布本地提交；保存本地恢复引用 `refs/local-backup/pre-public-metadata`，将作者／提交者邮箱替换为当前仓库账号的 GitHub noreply 地址，名字、提交消息、时间、各提交文件树均保留。本地仓库后续提交邮箱也设为 noreply，未修改全局配置。
+- 对原 HEAD 与处理后 HEAD 的文件树比较为空：应用、原型、测试及 CI 内容不变。代码基准由 `eb37e03e1bcdcb58974f4fdc95f96fde26ea8bd0` 变为 `190f6fadc71d1978788cce6b6c3c39e093cf5228`；后续文档补记再产生当前 HEAD。旧的 `46cd8b5`／`af76073` 推送请求已过期，首次推送必须按新的准确 SHA 和公开目标确认。
+- 只拟推送 `work/android-probe` 这一分支，不推本地备份引用，不使用 `--all`／`--mirror`；备份和临时处理脚本只在本机。未运行 Android 构建，未生成 APK，未推送任何内容。
