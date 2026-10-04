@@ -1,12 +1,12 @@
 # 双轨重写：当前任务交接
 
-更新：2026-10-02（已新增 Android 接入验证源码和 CI，并修正无 form 页面的获取与网格边界，尚未云端编译，见第 15 节）。
+更新：2026-10-04（82251af 首次云端构建成功，36 个测试通过，lint 0 错误／12 警告；0.1.1-probe 的备份规则、图标及 CI 工具修复已准备，见第 15.13～15.14 节）。
 
 - 当前任务：按开发流程推进首版个人课表；先完成最小 Android 学校登录／直接获取／解析预览验证，再推进正式数据库与页面。
-- 确认状态：需求、原生技术栈、AD-1～AD-12 与网页原型范围沿用已确认内容；用户授权持续开发、创建新仓库并改为公开。仓库现为 Public；拟推送到 `work/android-probe`，等待该次推送确认。正式包名、试用签名连续性和完整 UI 方案仍待确认。
+- 确认状态：需求、原生技术栈、AD-1～AD-12 与网页原型范围沿用已确认内容；用户授权持续开发、创建新仓库并改为公开。用户于 2026-10-04 回复“批准”，已批准将 `82251af` 推送到 `work/android-probe` 并触发云端构建。后续重新推送仍需每次确认；正式包名、连续签名和完整 UI 方案待确认。
 - 当前执行者：Codex（2026-10-02）。本轮已实测可读写目录、执行 pwsh／Python／Node、读取公开 GitHub API 与依赖仓库；`gh` 不在 PATH，未验证账号推送权限。此前学校电脑浏览器验证见第 12 节；本轮续执行只在内存核对既有私人样本的结构，输出字段数量、网格形状和固定表头，没有输出账号／课程内容，没有读取浏览器会话或创建私人数据文件。未安装或运行本地 Android 构建工具链。
-- 目标分支／基准提交：本地及拟推送分支 `work/android-probe`；代码基准 `190f6fadc71d1978788cce6b6c3c39e093cf5228`（公开前替换提交邮箱，文件树不变；后续仅补交接记录）。远端 `https://github.com/zfy06011/class-her-rewrite` 已创建并改为公开，origin 已配置。首次推送仍待用户确认，尚无远端 CI run 或 APK。
-- 进展：最小验证工程、WebView 会话获取、Kotlin 解析、日期／调课／三方字段合并／今日列表计算规则及相关单测源码已写入；本地 Python／JS 检查与 Kotlin 语法／XML／YAML 检查通过。远端公开状态已通过 GitHub API 和页面确认，仍为空仓库，等待首次推送确认；Android 编译、Kotlin 单测执行、学校真机闭环与会话持久性未验证。
+- 目标分支／基准提交：`work/android-probe`，远端及首个 APK 来源为 `82251afb89d311c63d9812442cf3a40876be01b2`。公开远端 `https://github.com/zfy06011/class-her-rewrite`，首次 CI run `37212152682` 成功；本地已准备后续 0.1.1-probe 修复，未获再次推送确认。
+- 进展：首次公开推送和云端构建成功，36 个 Kotlin 测试通过，0.1.0-probe debug APK 已下载并核对来源／哈希。Lint 0 错误、12 警告；本地已补备份／换机排除规则、应用图标并更新 CI 工具，下一次构建待批准。真机接入、会话持久性和真实 6 小时检查仍未验证。
 - 文档约定：本文件是唯一当前交接文档。第 8～11 节为验证历史，第 12 节为电脑直接获取记录，第 14 节为网页原型结果；当前开发状态以顶部与第 15 节为准。`../重写参考.md` 当前工作区不存在。
 
 ## 1. 已确认的首版需求
@@ -446,13 +446,13 @@ GitHub Actions 的第三方步骤固定到本轮 GitHub API 核对的提交 SHA�
 
 - **本地通过**：`uv run --with lxml python verify/parse_timetable.py --self-test`（本轮实际命令带 `--no-project`，uv 仅提示当前无 Python project，self-test 为 PASS）；`node --check prototype/app.js`、`node --check app/src/main/assets/sdwu-fetch.js`；`node verify/sdwu_fetch_test.cjs`。后者以合成数据验证官方来源、本人表单、请求参数、同源凭据、重复／缺失表单、重定向、HTTP 失败和响应大小上限，不触网。
 - **静态通过**：tree-sitter Kotlin 语法检查、全部 Android XML 解析及工作流 YAML 结构检查；未发现原生 JS bridge、Cookie 读取、私密日志或破坏性数据库迁移调用。静态语法检查不验证 Kotlin 类型、依赖解析、Compose／Hilt 生成或运行行为。
-- **已写、未执行**：5 个 Kotlin 单测类，36 个测试方法，涵盖周次边界、节次分段、跨周调课、停课、时间边界、6 小时策略、失败退避、失效、身份不一致、异常响应、合并单元格、双列时间栏、额外列／越界跨度、解析疑点、三方字段比较、旧冲突失效及今日／下一次课程计算。只能由云端构建执行，不将“存在测试源码”写成“测试通过”。
-- **未检查／阻塞**：Android 编译与 lint、Kotlin 单测、真机视觉／字体缩放、WebView 实际登录／框架适配、Android 会话持久性及自然过期、真实 6 小时检查、网络与取消的手机行为。无 APK 可安装，不能交付“可用 Android 应用”。原生主题只做系统深浅切换，完整的手动主题设置留待正式 UI。
+- **云端已执行通过（82251af）**：5 个 Kotlin 单测类、36 个测试，报告为 0 failures／0 ignored／100% successful。覆盖周次、时间、调课／停课、6 小时策略、解析安全、字段合并和今日课程规则。本地后续 XML／CI 工具修复尚未经过新构建，不把旧 APK 的通过结论套用到新提交。
+- **未检查／阻塞**：真机视觉／字体缩放、WebView 实际登录／框架适配、Android 会话持久性及自然过期、真实 6 小时检查、网络与取消的手机行为。已有 0.1.0-probe 验证 APK，不等于完整应用或学校接入已验收。原生主题只做系统深浅切换，完整手动主题设置留待正式 UI。
 - **提交状态**：首个本地源码提交经公开前邮箱处理后为 `190f6fadc71d1978788cce6b6c3c39e093cf5228`，后续只补交接记录；无远端推送。原有 parser 与原型源码本轮没有改动，只纳入完整运行入口；没有独立验收文档。
 
 ### 15.5 接续步骤与跳过项
 
-1. 本地提交及私有远端已完成（第 15.9～15.10 节），远端核对为空。下一步请用户确认将本地提交推到 `zfy06011/class-her-rewrite` 的 `work/android-probe` 并触发验证构建；仅在获得本次推送确认后执行，不创建公开发布或合并操作。
+1. 首次推送和构建已完成；下一步确认第 15.14 节修复的再次推送，重建 0.1.1-probe。每次重新推送仍需确认，不进行正式发布或合并。
 2. 运行云端检查并修复范围内失败；每次重推重新取得确认。通过后交付上述版本的 debug 验证 APK 与实际 SHA／run／artifact，再由用户在小米 14 登录，获取两次核对内容，测试退出会话或失败后原预览保留。
 3. 接入验证通过后再推进正式 Room 数据模型、公共写入锁、导入确认／保守身份匹配／字段合并与原型对应原生页面；实现前补齐第 5 节涉及用户行为和数据安全的未决契约。正式完整 UI 依据仍待用户对原型的意见。
 4. 当前先跳过跨存储备份恢复、连续试用签名、完整原生界面与真机结果；这些没有被降低完成标准或标为已完成。开发目标仍在进行，本轮只完成可独立准备的源码与配置。
@@ -507,3 +507,20 @@ GitHub Actions 的第三方步骤固定到本轮 GitHub API 核对的提交 SHA�
 - 远端核对仍为空，仅本次任务的 3 个未发布本地提交；保存本地恢复引用 `refs/local-backup/pre-public-metadata`，将作者／提交者邮箱替换为当前仓库账号的 GitHub noreply 地址，名字、提交消息、时间、各提交文件树均保留。本地仓库后续提交邮箱也设为 noreply，未修改全局配置。
 - 对原 HEAD 与处理后 HEAD 的文件树比较为空：应用、原型、测试及 CI 内容不变。代码基准由 `eb37e03e1bcdcb58974f4fdc95f96fde26ea8bd0` 变为 `190f6fadc71d1978788cce6b6c3c39e093cf5228`；后续文档补记再产生当前 HEAD。旧的 `46cd8b5`／`af76073` 推送请求已过期，首次推送必须按新的准确 SHA 和公开目标确认。
 - 只拟推送 `work/android-probe` 这一分支，不推本地备份引用，不使用 `--all`／`--mirror`；备份和临时处理脚本只在本机。未运行 Android 构建，未生成 APK，未推送任何内容。
+
+### 15.13 首次授权推送与云端构建（2026-10-04）
+
+- 用户回复“批准”，对当前公开目标及提交的首次推送授权明确。已执行 `git push -u origin HEAD:refs/heads/work/android-probe`，成功建立远端分支；`git ls-remote origin refs/heads/work/android-probe` 返回 `82251afb89d311c63d9812442cf3a40876be01b2`，与实际本地 HEAD 一致。没有推送备份引用、未跟踪资源或私人文件。
+- [GitHub Actions run 37212152682](https://github.com/zfy06011/class-her-rewrite/actions/runs/37212152682) 由 push 触发，head SHA 为上述提交，分支 `work/android-probe`，job `111465346798` 最终 success。现有 Python／JS 检查、36 个 Kotlin 测试、lint 和 assembleDebug 全部执行成功；lint 实际报告为 **0 错误、12 警告**，不是零告警。
+- APK：版本 `0.1.0-probe`／versionCode `1`，包名 `com.classher.timetable.probe`，变体 `debug`。下载 artifact ID `11307395441`，诊断 artifact ID `11306774198`；构建 `provenance.json` 的源码 SHA、版本和 APK 哈希已核对。APK SHA-256 为 `ed2fc36564331586959f87254d93ec9c6779c2ede807af754aa69778c1c48bd6`，10,879,646 字节。
+- 本地下载位置：`.verify-tmp/ci-37212152682/ClassHer-0.1.0-probe-82251af-debug.apk`；同目录保留原 ZIP、诊断 ZIP 和 provenance，不提交二进制或临时下载链接。GitHub artifact 预计保留至 2026-10-18（下载后以本地文件为准）。
+- 核心试用：在小米 14 安装验证包，本人在学校页面登录并打开当前学期个人课表；获取两次核对一致性与疑点；退出学校会话再获取，原预览应保留。账号／密码／验证码由用户输入，不要求上传完整课表或认证截图。签名为本次 CI 默认 debug 签名，后续 run 不保证可覆盖安装；本轮没有正式发布或真机通过声明。
+
+### 15.14 首次构建后的范围内修复（本地准备）
+
+- 报告中的 `DataExtractionRules` 与 `MissingApplicationIcon` 已在源码修复：保持 `allowBackup=false`，为 Android 11 及以下增加 fullBackupContent，Android 12+ 增加 cloud-backup 和 device-transfer 的全域排除（root／file／database／sharedpref／external 及 device-protected 对应域），明确学校 WebView 会话不随系统备份／换机迁移。依据 [Android 官方备份规则](https://developer.android.com/identity/data/autobackup)。这不是 AD-11 的业务备份／恢复实现。
+- 图标复用原型自绘粉彩书本，新增原生 vector／adaptive icon，含 monochrome 入口；未复制参考图像素或增加页面。版本升级为 `0.1.1-probe`／versionCode `2`，以区分后续 APK 与已构建的 0.1.0。
+- 修复 gradlew 在 Git 中缺少可执行位的 CI 告警；按各官方仓库最新稳定 release 和 action.yml 核对，把 checkout／setup-java／setup-python／setup-node／upload-artifact／setup-gradle 更新为 Node 24 运行时并固定 SHA。新版本分别为 7.0.1／6.0.1／7.0.0／7.0.0／7.0.1／6.4.0；官方 README 的最低 runner 要求 2.327.1（checkout 的容器 Git 场景为 2.329.0），本次 runner 为 2.337.0。保留 JDK 17、SDK 36、Android 库版本和全部必需检查，不增加写权限。
+- **本地通过**：所有 Android XML 解析，三个备份／迁移模式的排除域及 manifest 引用检查，工作流 YAML／固定 SHA／原必需 Gradle 命令／contents:read 检查，diff 空白检查。未安装或运行本地 Android 工具链。新图标、资源打包和新版 CI Actions 尚待重新构建，不宣称上述两项 lint 警告已在新报告中消失。
+- 其余 10 个 lint 警告为 target SDK／Gradle／依赖新版本提示，暂保留已确认兼容组合，不通过禁用 lint 或升级架构来制造零警告。KAPT 单测处理器的无注解选项告警保留记录；不影响本次 36 个测试通过，后续按需要单独处理。
+- 当前改动仅涉及 manifest／备份 XML／图标资源／版本／CI 工具／wrapper 文件位及本 HANDOFF；所有私人样本、APK、下载 ZIP、截图与签名文件排除。需要再次确认后推送到同一公开仓库 `work/android-probe`，以新实际 SHA 重建 0.1.1-probe。用户本次“批准”已用于 82251af，不自动代替下一次推送确认。

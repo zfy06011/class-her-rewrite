@@ -1,0 +1,29 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp" android:height="108dp"
+    android:viewportWidth="108" android:viewportHeight="108">
+    <!-- 复用原型中自绘像素书本的粉彩与书脊，图案位于自适应图标安全区。 -->
+    <group android:pivotX="54" android:pivotY="54" android:scaleX="0.9" android:scaleY="0.9">
+    <path android:fillColor="#F8DFB5" android:strokeColor="#25272B" android:strokeWidth="2"
+        android:pathData="M26,65 L54,54 L82,65 L82,73 L54,84 L26,73 Z" />
+    <path android:fillColor="#F8F4E9" android:strokeColor="#25272B" android:strokeWidth="2"
+        android:pathData="M26,65 L54,76 L82,65 L82,73 L54,84 L26,73 Z" />
+    <path android:fillColor="#E2C7ED" android:strokeColor="#25272B" android:strokeWidth="2"
+        android:pathData="M26,55 L54,44 L82,55 L82,63 L54,74 L26,63 Z" />
+    <path android:fillColor="#F8F4E9" android:strokeColor="#25272B" android:strokeWidth="2"
+        android:pathData="M26,55 L54,66 L82,55 L82,63 L54,74 L26,63 Z" />
+    <path android:fillColor="#BFDCD0" android:strokeColor="#25272B" android:strokeWidth="2"
+        android:pathData="M26,45 L54,34 L82,45 L82,53 L54,64 L26,53 Z" />
+    <path android:fillColor="#F8F4E9" android:strokeColor="#25272B" android:strokeWidth="2"
+        android:pathData="M26,45 L54,56 L82,45 L82,53 L54,64 L26,53 Z" />
+    <path android:fillColor="#B8CEF5" android:strokeColor="#25272B" android:strokeWidth="2"
+        android:pathData="M26,33 L54,22 L82,33 L82,43 L54,54 L26,43 Z" />
+    <path android:fillColor="#F8F4E9" android:strokeColor="#25272B" android:strokeWidth="2"
+        android:pathData="M26,33 L54,44 L82,33 L82,43 L54,54 L26,43 Z" />
+    <path android:fillColor="#B8CEF5" android:strokeColor="#25272B" android:strokeWidth="2"
+        android:pathData="M26,33 L54,22 L82,33 L54,44 Z" />
+    <path android:fillColor="#F8F4E9" android:strokeColor="#25272B" android:strokeWidth="1.5"
+        android:pathData="M43,32 L54,27 L65,32 L54,37 Z" />
+    <path android:fillColor="#00000000" android:strokeColor="#25272B" android:strokeWidth="2"
+        android:pathData="M54,44 L54,52 M54,57 L54,63 M54,67 L54,73 M54,77 L54,83" />
+    </group>
+</vector>
