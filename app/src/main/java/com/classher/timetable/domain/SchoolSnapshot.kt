@@ -17,7 +17,15 @@ data class ParsedMeeting(
     val periods: Set<Int>,
 )
 
-data class ParseDoubt(val reason: String, val weekday: Int? = null, val bigPeriod: Int? = null)
+enum class DoubtKind { MISSING_ROOM, UNSCHEDULED, OTHER }
+
+data class ParseDoubt(
+    val reason: String,
+    val weekday: Int? = null,
+    val bigPeriod: Int? = null,
+    val kind: DoubtKind = DoubtKind.OTHER,
+    val meeting: ParsedMeeting? = null,
+)
 
 data class SchoolSnapshot(
     val scope: SourceScope,

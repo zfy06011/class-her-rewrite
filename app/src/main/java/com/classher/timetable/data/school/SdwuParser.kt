@@ -1,6 +1,7 @@
 package com.classher.timetable.data.school
 
 import com.classher.timetable.domain.ParseDoubt
+import com.classher.timetable.domain.DoubtKind
 import com.classher.timetable.domain.ParsedMeeting
 import com.classher.timetable.domain.SchoolException
 import com.classher.timetable.domain.SchoolFailure
@@ -101,11 +102,14 @@ class SdwuParser @Inject constructor() : SchoolParser {
                         consumed += anchor + 1
                         next
                     } else ""
-                    if (room.isBlank()) doubts += ParseDoubt("教室未提供，请核对", weekday, big)
+                    val parsed = ParsedMeeting(name, teacher, room, weekday, weeks, periods)
+                    val added = meetings.add(parsed)
+                    if (added && room.isBlank()) doubts += ParseDoubt(
+                        "教室未提供，请核对", weekday, big, DoubtKind.MISSING_ROOM, parsed,
+                    )
                     if (periods.none { (it + 1) / 2 == big }) {
                         doubts += ParseDoubt("网格行与节次不同，请核对", weekday, big)
                     }
-                    meetings += ParsedMeeting(name, teacher, room, weekday, weeks, periods)
                 }
                 if (lines.indices.any { it !in consumed }) {
                     doubts += ParseDoubt("存在未归属的文本，请核对", weekday, big)
@@ -116,7 +120,9 @@ class SdwuParser @Inject constructor() : SchoolParser {
         val listedNames = courseList(document)
         val scheduledNames = meetings.map { it.name }.toSet()
         val unscheduled = listedNames.filter { it !in scheduledNames }.distinct()
-        if (unscheduled.isNotEmpty()) doubts += ParseDoubt("有 ${unscheduled.size} 门课程未提供固定排课")
+        if (unscheduled.isNotEmpty()) doubts += ParseDoubt(
+            "有 ${unscheduled.size} 门课程未提供固定排课", kind = DoubtKind.UNSCHEDULED,
+        )
         val declaredCount = Regex("课程门数\\s*[:：]?\\s*(\\d+)")
             .find(document.text())?.groupValues?.get(1)?.toIntOrNull()
         if (declaredCount != null && declaredCount != (scheduledNames + listedNames).size) {

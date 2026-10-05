@@ -50,6 +50,8 @@ class SdwuParserTest {
         assertFalse(result.readyForConfirmation)
         assertEquals(listOf("未排课示例"), result.unscheduledNames)
         assertTrue(result.doubts.any { "教室" in it.reason })
+        assertEquals(result.meetings.single(), result.doubts.single { it.kind == com.classher.timetable.domain.DoubtKind.MISSING_ROOM }.meeting)
+        assertEquals(1, result.doubts.count { it.kind == com.classher.timetable.domain.DoubtKind.UNSCHEDULED })
     }
 
     @Test fun nonEmptyUnknownCellsAreNotDropped() {
@@ -78,6 +80,8 @@ class SdwuParserTest {
         val result = parser.parse(text, scope, 19, 12)
         assertEquals(1, result.meetings.size)
         assertEquals(setOf(1, 2, 3, 4), result.meetings.single().periods)
+        val missing = parser.parse(text.replace("<br>示例楼101", ""), scope, 19, 12)
+        assertEquals(1, missing.doubts.count { it.kind == com.classher.timetable.domain.DoubtKind.MISSING_ROOM })
     }
 
     @Test fun twoLeadingTimeColumnsAndNoFormAreSupported() {

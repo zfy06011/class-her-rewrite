@@ -1,4 +1,4 @@
-name: Android probe
+name: Android trial
 
 on:
   workflow_dispatch:
@@ -14,7 +14,7 @@ concurrency:
 
 jobs:
   verify-and-build:
-    name: Verify and build probe
+    name: Verify and build trial
     runs-on: ubuntu-24.04
     timeout-minutes: 40
     steps:
@@ -43,9 +43,31 @@ jobs:
       - name: Install cloud Android packages
         run: |
           "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-36" "build-tools;35.0.0"
-      - name: Unit tests, lint and debug APK
-        run: bash ./gradlew --no-daemon :app:testDebugUnitTest :app:lintDebug :app:assembleDebug
+      - name: Unit tests and lint
+        run: bash ./gradlew --no-daemon :app:testDebugUnitTest :app:lintDebug
+      - name: Build with stable trial signature
+        if: github.event_name != 'pull_request'
+        env:
+          CLASSHER_SIGNING_KEYSTORE_B64: ${{ secrets.CLASSHER_SIGNING_KEYSTORE_B64 }}
+          CLASSHER_SIGNING_PASSWORD: ${{ secrets.CLASSHER_SIGNING_PASSWORD }}
+          CLASSHER_REQUIRE_STABLE_SIGNING: 'true'
+        run: |
+          set -euo pipefail
+          umask 077
+          test -n "$CLASSHER_SIGNING_KEYSTORE_B64" && test -n "$CLASSHER_SIGNING_PASSWORD"
+          export CLASSHER_SIGNING_STORE_FILE="$RUNNER_TEMP/classher-trial.jks"
+          trap 'rm -f -- "$CLASSHER_SIGNING_STORE_FILE"' EXIT
+          printf '%s' "$CLASSHER_SIGNING_KEYSTORE_B64" | base64 --decode > "$CLASSHER_SIGNING_STORE_FILE"
+          unset CLASSHER_SIGNING_KEYSTORE_B64
+          bash ./gradlew --no-daemon --no-configuration-cache :app:assembleDebug
+      - name: Verify trial APK certificate
+        if: github.event_name != 'pull_request'
+        run: |
+          set -euo pipefail
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose --print-certs app/build/outputs/apk/debug/app-debug.apk > "$RUNNER_TEMP/apk-certificate.txt"
+          grep -F 'Signer #1 certificate SHA-256 digest: 0772965c1f74eb3ed73e486429e81f8d6985206d3cb2d609c444daa090931e0e' "$RUNNER_TEMP/apk-certificate.txt"
       - name: Write APK source provenance
+        if: github.event_name != 'pull_request'
         env:
           BUILD_SHA: ${{ steps.source.outputs.sha }}
           BUILD_RUN: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
@@ -62,16 +84,18 @@ jobs:
               'versionCode': int(re.search(r'versionCode = (\d+)', config)[1]),
               'applicationId': re.search(r'applicationId = "([^"]+)"', config)[1],
               'apkSha256': hashlib.sha256(apk.read_bytes()).hexdigest(),
+              'signerCertificateSha256': '0772965c1f74eb3ed73e486429e81f8d6985206d3cb2d609c444daa090931e0e',
               'deviceValidated': False,
           }
           pathlib.Path('app/build/outputs/provenance.json').write_text(json.dumps(provenance, indent=2))
           with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as summary:
-              summary.write('Probe APK built from `' + provenance['commit'] + '`. Device validation pending.\n')
+              summary.write('Stable trial APK built from `' + provenance['commit'] + '`. Device validation pending.\n')
           PY
-      - name: Upload probe APK and provenance
+      - name: Upload trial APK and provenance
+        if: github.event_name != 'pull_request'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: classher-probe-${{ steps.source.outputs.sha }}
+          name: classher-trial-${{ steps.source.outputs.sha }}
           path: |
             app/build/outputs/apk/debug/app-debug.apk
             app/build/outputs/provenance.json
@@ -82,6 +106,8 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: android-checks-${{ steps.source.outputs.sha }}
-          path: app/build/reports/
+          path: |
+            app/build/reports/
+            app/schemas/
           if-no-files-found: ignore
           retention-days: 14

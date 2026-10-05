@@ -1,0 +1,355 @@
+package com.classher.timetable.ui
+
+import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Arrangement as LayoutArrangement
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+import com.classher.timetable.R
+import com.classher.timetable.domain.*
+import kotlinx.coroutines.delay
+import java.time.DayOfWeek
+import java.time.Instant
+import java.time.LocalDate
+import java.time.LocalTime
+import java.time.format.DateTimeFormatter
+import java.time.temporal.ChronoUnit
+import java.time.temporal.TemporalAdjusters
+import java.util.UUID
+
+private val dayNames = listOf("一", "二", "三", "四", "五", "六", "日")
+private val clockFormat = DateTimeFormatter.ofPattern("HH:mm")
+private fun times(ranges: List<TimeRange>) = ranges.joinToString(" / ") { "${it.start.format(clockFormat)}–${it.end.format(clockFormat)}" }
+
+@Composable
+fun TimetableApp(state: TimetableState, model: TimetableViewModel, openSchool: () -> Unit, fetch: () -> Unit, checkUpdates: () -> Unit, logout: () -> Unit) {
+    var page by rememberSaveable { mutableStateOf(0) }
+    var importing by rememberSaveable { mutableStateOf(false) }
+    var detailId by remember { mutableStateOf<UUID?>(null) }
+    LaunchedEffect(state.importedId) {
+        if (state.importedId != null) { importing = false; page = 0; model.consumeImported() }
+    }
+    BackHandler(importing) { if (!state.saving) importing = false }
+    Scaffold(bottomBar = { if (!importing) NavigationBar {
+        listOf("首页", "课表", "我的").forEachIndexed { index, label ->
+            NavigationBarItem(selected = page == index, onClick = { page = index },
+                icon = { Text(listOf("日", "周", "我")[index], style = MaterialTheme.typography.titleSmall) }, label = { Text(label) })
+        }
+    } }) { insets ->
+        Column(Modifier.fillMaxSize().padding(insets)) {
+            Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp), horizontalArrangement = LayoutArrangement.SpaceBetween) {
+                Column(Modifier.weight(1f)) {
+                    Text(if (importing) "确认导入" else "双轨", style = MaterialTheme.typography.headlineMedium)
+                    Text(if (importing) "把学校课表收进自己的手账" else "今天也按自己的节奏", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                if (importing) TextButton(onClick = { importing = false }, enabled = !state.saving) { Text("返回") }
+                else TextButton(onClick = { importing = true }) { Text("学校导入") }
+            }
+            when {
+                state.loading -> { LinearProgressIndicator(Modifier.fillMaxWidth()); Text("正在读取本地课表…", Modifier.padding(16.dp)) }
+                state.loadFailed -> {
+                    Text(state.status, Modifier.padding(16.dp), color = MaterialTheme.colorScheme.error)
+                    Button(onClick = model::load, modifier = Modifier.padding(16.dp)) { Text("重试读取") }
+                }
+                importing -> ImportScreen(state, model, openSchool, fetch, logout)
+                else -> {
+                    if (state.schedules.size > 1) Row(Modifier.horizontalScroll(rememberScrollState()).padding(horizontal = 16.dp), horizontalArrangement = LayoutArrangement.spacedBy(8.dp)) {
+                        state.schedules.forEach { term -> FilterChip(selected = state.selected?.id == term.id, onClick = { model.selectTerm(term.id) },
+                            enabled = !state.busy, label = { Text(term.title) }) }
+                    }
+                    val selected = state.selected
+                    if (state.busy) LinearProgressIndicator(Modifier.fillMaxWidth())
+                    if (selected == null && page != 2) EmptySchedule { importing = true }
+                    else when (page) {
+                        0 -> selected?.let { TodayScreen(it, state.status) { course -> detailId = course } }
+                        1 -> selected?.let { WeekScreen(it) { course -> detailId = course } }
+                        2 -> SettingsScreen(state, model, { importing = true }, checkUpdates)
+                    }
+                }
+            }
+        }
+    }
+    val selected = state.selected
+    val detail = selected?.arrangements?.firstOrNull { it.id == detailId }
+    if (detail != null && selected != null) AlertDialog(onDismissRequest = { detailId = null }, title = { Text(detail.name) }, text = {
+        Column(verticalArrangement = LayoutArrangement.spacedBy(8.dp)) {
+            Text("教师：${detail.teacher}")
+            Text("地点：${detail.room.ifBlank { "学校未提供（已确认）" }}")
+            Text("星期${dayNames[detail.weekday - 1]} · ${times(detail.time.ranges(selected.periods))}")
+            Text("周次：${detail.weeks.sorted().joinToString("、")}")
+            val time = detail.time
+            if (time is MeetingTime.Periods) Text("节次：${time.numbers.sorted().joinToString("、")}")
+        }
+    }, confirmButton = { TextButton(onClick = { detailId = null }) { Text("完成") } })
+}
+
+@Composable
+private fun EmptySchedule(onImport: () -> Unit) {
+    Column(Modifier.verticalScroll(rememberScrollState()).padding(32.dp), verticalArrangement = LayoutArrangement.spacedBy(16.dp)) {
+        Image(painterResource(R.drawable.ic_launcher_foreground), contentDescription = null, modifier = Modifier.size(96.dp))
+        Text("新学期，从一张课表开始", style = MaterialTheme.typography.headlineSmall)
+        Text("登录学校并确认导入。保存后，即使没有网络也能查看。", color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Button(onClick = onImport) { Text("导入学校课表") }
+    }
+}
+
+@Composable
+private fun TodayScreen(saved: SavedSchedule, status: String, onCourse: (UUID) -> Unit) {
+    var now by remember { mutableStateOf(Instant.now()) }
+    LaunchedEffect(saved.id) { while (true) { now = Instant.now(); delay(30_000) } }
+    val all = remember(saved) { occurrences(saved.term, saved.arrangements, emptyList(), saved.periods) }
+    val summary = remember(all, now) { summarizeToday(saved.term, all, now) }
+    LazyColumn(contentPadding = PaddingValues(16.dp), verticalArrangement = LayoutArrangement.spacedBy(12.dp)) {
+        item {
+            Text("${summary.date.monthValue} 月 ${summary.date.dayOfMonth} 日 · 星期${dayNames[summary.date.dayOfWeek.value - 1]}", style = MaterialTheme.typography.titleLarge)
+            Text(summary.teachingWeek?.let { "第 $it 教学周 · ${saved.title}" } ?: "当前日期不在此学期", style = MaterialTheme.typography.bodySmall)
+        }
+        item {
+            Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)) {
+                Column(Modifier.padding(20.dp), verticalArrangement = LayoutArrangement.spacedBy(8.dp)) {
+                    val running = summary.running.firstOrNull()
+                    val next = summary.next
+                    Text(if (running != null) "正在上课" else "下一节课", style = MaterialTheme.typography.labelLarge)
+                    Text(running?.occurrence?.name ?: next?.segment?.occurrence?.name ?: "本学期没有后续课程", style = MaterialTheme.typography.titleLarge)
+                    if (running != null) Text(times(listOf(running.range)))
+                    else if (next != null) {
+                        Text("${next.segment.occurrence.date} · ${times(listOf(next.segment.range))}")
+                        val minutes = next.untilStart.toMinutes().coerceAtLeast(0)
+                        Text(if (minutes < 60) "${minutes.coerceAtLeast(1)} 分钟后" else "${minutes / 60} 小时 ${minutes % 60} 分钟后", style = MaterialTheme.typography.labelLarge)
+                    }
+                }
+            }
+        }
+        item { Text("今日课程", style = MaterialTheme.typography.titleMedium) }
+        if (summary.entries.isEmpty()) item { Text("今天没有课程，好好安排自己的时间。", Modifier.padding(vertical = 12.dp), color = MaterialTheme.colorScheme.onSurfaceVariant) }
+        items(summary.entries, key = { "${it.occurrence.arrangementId}:${it.occurrence.originalDate}" }) { entry ->
+            CourseCard(entry.occurrence, entry.ended, entry.conflicting) { onCourse(entry.occurrence.arrangementId) }
+        }
+        item { Text(status, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+    }
+}
+
+@Composable
+private fun CourseCard(course: Occurrence, ended: Boolean, conflict: Boolean, click: () -> Unit) {
+    Card(onClick = click, modifier = Modifier.fillMaxWidth().alpha(if (ended) 0.65f else 1f),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)) {
+        Column(Modifier.padding(16.dp), verticalArrangement = LayoutArrangement.spacedBy(4.dp)) {
+            Text(times(course.ranges), style = MaterialTheme.typography.labelLarge)
+            Text(course.name, style = MaterialTheme.typography.titleMedium)
+            Text(course.room.ifBlank { "地点未提供（已确认）" }, style = MaterialTheme.typography.bodyMedium)
+            if (ended) Text("已结束", style = MaterialTheme.typography.labelSmall)
+            if (conflict) Text("时间重叠", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.labelLarge)
+        }
+    }
+}
+
+@Composable
+private fun WeekScreen(saved: SavedSchedule, onCourse: (UUID) -> Unit) {
+    var week by rememberSaveable(saved.id.toString()) { mutableStateOf(saved.term.weekOf(LocalDate.now(SchoolZone)) ?: 1) }
+    val all = remember(saved) { occurrences(saved.term, saved.arrangements, emptyList(), saved.periods) }
+    val monday = saved.term.dateOf(week, 1)
+    val visible = all.filter { it.date in monday..monday.plusDays(6) }
+    Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), horizontalArrangement = LayoutArrangement.SpaceBetween) {
+        TextButton(onClick = { week-- }, enabled = week > 1) { Text("上一周") }
+        Column { Text("第 $week 教学周", style = MaterialTheme.typography.titleMedium); Text("$monday", style = MaterialTheme.typography.bodySmall) }
+        TextButton(onClick = { week++ }, enabled = week < saved.term.weekCount) { Text("下一周") }
+    }
+    Text("左右滑动查看周末 · 点课程查看详情", Modifier.padding(horizontal = 16.dp, vertical = 8.dp), style = MaterialTheme.typography.bodySmall)
+    val start = saved.periods.values.minOf { it.start }.toSecondOfDay() / 60
+    val end = saved.periods.values.maxOf { it.end }.toSecondOfDay() / 60
+    val minuteScale = 1.2f
+    val dailyLanes = (1..7).map { day ->
+        val segments = visible.filter { it.date.dayOfWeek.value == day }.flatMap { course -> course.ranges.map { LessonSegment(course, it) } }
+            .sortedWith(compareBy({ it.range.start }, { it.range.end }, { it.occurrence.arrangementId.toString() }))
+        val lanes = mutableListOf<MutableList<LessonSegment>>()
+        segments.forEach { segment ->
+            val lane = lanes.firstOrNull { entries -> entries.none { it.range.overlaps(segment.range) } }
+                ?: mutableListOf<LessonSegment>().also { lanes.add(it) }
+            lane.add(segment)
+        }
+        lanes
+    }
+    val dayWidths = dailyLanes.map { (it.size * 80f).coerceAtLeast(144f) }
+    Column(Modifier.horizontalScroll(rememberScrollState()).verticalScroll(rememberScrollState())) {
+        Row {
+            Spacer(Modifier.width(56.dp))
+            for (day in 1..7) Column(Modifier.width(dayWidths[day - 1].dp).padding(8.dp)) {
+                Text("星期${dayNames[day - 1]}", style = MaterialTheme.typography.titleSmall)
+                Text("${monday.plusDays((day - 1).toLong()).dayOfMonth} 日", style = MaterialTheme.typography.bodySmall)
+            }
+        }
+        Row {
+            Box(Modifier.width(56.dp).height(((end - start) * minuteScale + 48).dp)) {
+                saved.periods.toSortedMap().forEach { (number, range) ->
+                    Column(Modifier.offset(y = ((range.start.toSecondOfDay() / 60 - start) * minuteScale).dp).padding(start = 8.dp)) {
+                        Text("$number", style = MaterialTheme.typography.labelLarge)
+                        Text(range.start.format(clockFormat), style = MaterialTheme.typography.labelSmall)
+                    }
+                }
+            }
+            for (day in 1..7) {
+                val lanes = dailyLanes[day - 1]
+                val width = dayWidths[day - 1] / lanes.size.coerceAtLeast(1)
+                Box(Modifier.width(dayWidths[day - 1].dp).height(((end - start) * minuteScale + 48).dp)) {
+                    saved.periods.values.forEach { range -> HorizontalDivider(Modifier.offset(y = ((range.start.toSecondOfDay() / 60 - start) * minuteScale).dp)) }
+                    lanes.forEachIndexed { index, lane -> lane.forEach { segment ->
+                        Card(onClick = { onCourse(segment.occurrence.arrangementId) },
+                            modifier = Modifier.offset(x = (index * width).dp, y = ((segment.range.start.toSecondOfDay() / 60 - start) * minuteScale).dp)
+                                .width(width.dp).height((ChronoUnit.MINUTES.between(segment.range.start, segment.range.end).toInt() * minuteScale).coerceAtLeast(52f).dp).padding(2.dp),
+                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)) {
+                            Column(Modifier.padding(6.dp)) {
+                                Text(segment.occurrence.name, style = MaterialTheme.typography.labelLarge, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                                Text(segment.occurrence.room.ifBlank { "地点未提供" }, style = MaterialTheme.typography.labelSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            }
+                        }
+                    } }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SettingsScreen(state: TimetableState, model: TimetableViewModel, onImport: () -> Unit, fetch: () -> Unit) {
+    LazyColumn(contentPadding = PaddingValues(16.dp), verticalArrangement = LayoutArrangement.spacedBy(16.dp)) {
+        item {
+            Text("我的课表", style = MaterialTheme.typography.titleLarge)
+            Text(state.selected?.title ?: "还没有导入课表", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(state.status, style = MaterialTheme.typography.bodySmall)
+        }
+        item {
+            Row(horizontalArrangement = LayoutArrangement.spacedBy(8.dp)) {
+                Button(onClick = onImport) { Text("学校导入") }
+                OutlinedButton(onClick = fetch, enabled = !state.busy && state.selected != null) { Text("立即检查更新") }
+            }
+            state.selected?.let { Text("上次成功检查：${it.lastSuccessfulCheck.atZone(SchoolZone).format(DateTimeFormatter.ofPattern("MM-dd HH:mm"))}", style = MaterialTheme.typography.bodySmall) }
+        }
+        item {
+            Text("外观", style = MaterialTheme.typography.titleMedium)
+            Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = LayoutArrangement.spacedBy(8.dp)) {
+                ThemePreference.entries.forEach { mode -> FilterChip(selected = state.theme == mode, onClick = { model.setTheme(mode) },
+                    label = { Text(when (mode) { ThemePreference.SYSTEM -> "跟随系统"; ThemePreference.LIGHT -> "浅色"; ThemePreference.DARK -> "深色" }) }) }
+            }
+        }
+        val unscheduled = state.selected?.unscheduled.orEmpty()
+        if (unscheduled.isNotEmpty()) {
+            item { Text("学期清单 · 未排课 ${unscheduled.size} 门", style = MaterialTheme.typography.titleMedium); Text("学校未提供固定时间，保留清单并等待安排。", style = MaterialTheme.typography.bodySmall) }
+            items(unscheduled) { name -> Card(Modifier.fillMaxWidth()) { Text(name, Modifier.padding(16.dp)) } }
+        }
+        item { Text("0.2.0 试用 · 课程保存在此设备", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+    }
+}
+
+@Composable
+private fun ImportScreen(state: TimetableState, model: TimetableViewModel, openSchool: () -> Unit, fetch: () -> Unit, logout: () -> Unit) {
+    var weeks by rememberSaveable { mutableStateOf(state.weekCount.toString()) }
+    var periodCount by rememberSaveable { mutableStateOf(state.periodsPerDay.toString()) }
+    val draft = state.draft
+    var dateText by remember(draft?.id) { mutableStateOf(if (draft?.snapshot?.scope?.let { it.year == "2026" && it.semester == "0" } == true) "2026-09-14" else "") }
+    var starts by remember(draft?.id) { mutableStateOf(sdwuDefaultPeriods().mapValues { it.value.start.format(clockFormat) }) }
+    var ends by remember(draft?.id) { mutableStateOf(sdwuDefaultPeriods().mapValues { it.value.end.format(clockFormat) }) }
+    var acknowledged by remember(draft?.id) { mutableStateOf(emptySet<Int>()) }
+    var confirmed by remember(draft?.id) { mutableStateOf(false) }
+    val date = runCatching { LocalDate.parse(dateText) }.getOrNull()
+    val parsedPeriods = runCatching {
+        (1..periodCount.toInt()).associateWith { number ->
+            require(starts[number]?.matches(Regex("[0-9]{2}:[0-9]{2}")) == true && ends[number]?.matches(Regex("[0-9]{2}:[0-9]{2}")) == true)
+            TimeRange(LocalTime.parse(starts[number]), LocalTime.parse(ends[number]))
+        }
+    }.getOrNull()
+    val term = runCatching { Term(requireNotNull(date), weeks.toInt()) }.getOrNull()
+    val planValid = draft != null && term != null && parsedPeriods != null && runCatching {
+        ImportPlan(draft.snapshot, term, parsedPeriods, acknowledged, draft.fetchedAt).validate()
+    }.isSuccess
+    LazyColumn(contentPadding = PaddingValues(16.dp), verticalArrangement = LayoutArrangement.spacedBy(12.dp)) {
+        item {
+            Text(state.status)
+            if (state.busy) LinearProgressIndicator(Modifier.fillMaxWidth())
+            Row(horizontalArrangement = LayoutArrangement.spacedBy(8.dp)) {
+                OutlinedButton(onClick = { model.configure(weeks.toInt(), periodCount.toInt()); openSchool() },
+                    enabled = !state.busy && weeks.toIntOrNull()?.let { it in 1..60 } == true && periodCount.toIntOrNull()?.let { it in 1..48 } == true) { Text("打开学校") }
+                Button(onClick = { model.configure(weeks.toInt(), periodCount.toInt()); fetch() }, enabled = !state.busy && weeks.toIntOrNull()?.let { it in 1..60 } == true && periodCount.toIntOrNull()?.let { it in 1..48 } == true) { Text("立即获取") }
+            }
+            if (state.running) TextButton(onClick = model::cancelFetch) { Text("取消获取") }
+        }
+        item {
+            Text("解析范围与学校所选学期一致", style = MaterialTheme.typography.titleSmall)
+            Row(horizontalArrangement = LayoutArrangement.spacedBy(12.dp)) {
+                OutlinedTextField(weeks, { weeks = it.take(2); confirmed = false }, label = { Text("总周数") }, modifier = Modifier.weight(1f), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), enabled = !state.busy)
+                OutlinedTextField(periodCount, { periodCount = it.take(2); confirmed = false }, label = { Text("每日节次") }, modifier = Modifier.weight(1f), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), enabled = !state.busy)
+            }
+        }
+        if (draft == null) item { Text("本人登录 → 教学安排 → 个人课表，选择学期后获取。预览未保存时关闭应用会清除；正式保存后可离线查看。") }
+        else {
+            val snapshot = draft.snapshot
+            item {
+                Text("${snapshot.scope.year} 学年 · 第 ${snapshot.scope.semester.toInt() + 1} 学期", style = MaterialTheme.typography.titleLarge)
+                Text("${snapshot.meetings.size} 条安排 · ${snapshot.unscheduledNames.size} 门未排课")
+                state.repeatedIdentically?.let { Text(if (it) "两次来源与内容一致" else "本次获取内容有变化") }
+                OutlinedTextField(dateText, { dateText = it.take(10); confirmed = false }, label = { Text("第一教学周周一（yyyy-MM-dd）") }, modifier = Modifier.fillMaxWidth(), enabled = !state.busy,
+                    isError = dateText.isNotBlank() && date?.dayOfWeek != DayOfWeek.MONDAY)
+                if (date != null && date.dayOfWeek != DayOfWeek.MONDAY) TextButton(onClick = {
+                    dateText = date.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY)).toString(); confirmed = false
+                }, enabled = !state.busy) { Text("确认采用该周周一 ${date.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY))}") }
+                Text("核对作息后保存；其他学期需自行确认日期与时间。", style = MaterialTheme.typography.bodySmall)
+            }
+            items((1..(periodCount.toIntOrNull()?.coerceIn(1, 48) ?: 12)).toList()) { number ->
+                Row(horizontalArrangement = LayoutArrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(starts[number].orEmpty(), { starts = starts + (number to it.take(5)); confirmed = false }, label = { Text("$number 节开始") }, modifier = Modifier.weight(1f), enabled = !state.busy)
+                    OutlinedTextField(ends[number].orEmpty(), { ends = ends + (number to it.take(5)); confirmed = false }, label = { Text("结束") }, modifier = Modifier.weight(1f), enabled = !state.busy)
+                }
+            }
+            item { Row {
+                Checkbox(confirmed, { confirmed = it }, enabled = !state.busy)
+                Text("已确认学期起点、总周数和作息", Modifier.padding(top = 12.dp), style = MaterialTheme.typography.bodyMedium)
+            } }
+            itemsIndexed(snapshot.doubts) { index, doubt ->
+                Card(Modifier.fillMaxWidth()) { Column(Modifier.padding(12.dp)) {
+                    Text(doubt.reason, color = MaterialTheme.colorScheme.error)
+                    doubt.meeting?.let { Text("${it.name} · 星期${dayNames[it.weekday - 1]} · ${it.periods.sorted().joinToString("、")} 节") }
+                    if (doubt.kind == DoubtKind.OTHER) Text("此项需要修正源数据后重新获取，暂不能导入。")
+                    else Row {
+                        Checkbox(index in acknowledged, { checked -> acknowledged = if (checked) acknowledged + index else acknowledged - index }, enabled = !state.busy)
+                        Text(if (doubt.kind == DoubtKind.MISSING_ROOM) "确认地点尚未提供" else "保留以下未排课课程清单", Modifier.padding(top = 12.dp))
+                    }
+                    if (doubt.kind == DoubtKind.UNSCHEDULED) snapshot.unscheduledNames.forEach { Text(it) }
+                } }
+            }
+            item {
+                Button(onClick = { model.save(draft.id, requireNotNull(term), requireNotNull(parsedPeriods), acknowledged) }, enabled = !state.busy && confirmed && planValid,
+                    modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text(if (state.saving) "正在保存…" else "确认并保存到本机") }
+                if (!planValid) Text("保存前请完成核对，检查日期、时间和周次范围。", style = MaterialTheme.typography.bodySmall)
+                Text("完整安排预览", Modifier.padding(top = 16.dp), style = MaterialTheme.typography.titleMedium)
+            }
+            itemsIndexed(snapshot.meetings) { index, meeting ->
+                Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)) {
+                    Column(Modifier.padding(16.dp)) {
+                        Text("${index + 1}. ${meeting.name}", style = MaterialTheme.typography.titleMedium)
+                        Text("${meeting.teacher} · ${meeting.room.ifBlank { "地点未提供" }}")
+                        Text("星期${dayNames[meeting.weekday - 1]} · ${meeting.periods.sorted().joinToString("、")} 节")
+                        Text("周次：${meeting.weeks.sorted().joinToString("、")}")
+                    }
+                }
+            }
+        }
+        item {
+            TextButton(onClick = model::clearPreview, enabled = !state.busy) { Text("清除本次预览") }
+            OutlinedButton(onClick = logout, enabled = !state.busy) { Text("退出学校会话，保留本地课表") }
+        }
+    }
+}
