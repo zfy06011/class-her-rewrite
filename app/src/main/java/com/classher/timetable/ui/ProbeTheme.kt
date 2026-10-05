@@ -5,6 +5,8 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.staticCompositionLocalOf
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.graphics.Color
 import com.classher.timetable.domain.ThemePreference
 
@@ -25,8 +27,14 @@ private val Dark = darkColorScheme(
     surfaceVariant = Color(0xFF373C36), onSurfaceVariant = Color(0xFFC1C7BD),
 )
 
+private val LightCourseColors = listOf(0xFFF6D6DF, 0xFFD4E1FB, 0xFFFAE6B5, 0xFFD0E9E0, 0xFFE3DAF5).map { Color(it) }
+private val DarkCourseColors = listOf(0xFF573A46, 0xFF344664, 0xFF554A2E, 0xFF2E4F44, 0xFF463C5C).map { Color(it) }
+val LocalCourseColors = staticCompositionLocalOf { LightCourseColors }
+
 @Composable
 fun ProbeTheme(preference: ThemePreference = ThemePreference.SYSTEM, content: @Composable () -> Unit) {
     val dark = when (preference) { ThemePreference.SYSTEM -> isSystemInDarkTheme(); ThemePreference.LIGHT -> false; ThemePreference.DARK -> true }
-    MaterialTheme(colorScheme = if (dark) Dark else Light, content = content)
+    CompositionLocalProvider(LocalCourseColors provides if (dark) DarkCourseColors else LightCourseColors) {
+        MaterialTheme(colorScheme = if (dark) Dark else Light, content = content)
+    }
 }

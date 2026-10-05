@@ -15,6 +15,7 @@ data class ImportPlan(
     val periods: Map<Int, TimeRange>,
     val acknowledgedDoubts: Set<Int>,
     val fetchedAt: Instant,
+    val attachToLocalTerm: UUID? = null,
 ) {
     fun validate() {
         require(snapshot.scope.accountDigest.matches(Regex("[0-9a-f]{64}")))
@@ -46,12 +47,17 @@ data class ImportPlan(
 data class SavedSchedule(
     val id: UUID,
     val title: String,
-    val scope: SourceScope,
+    val scope: SourceScope?,
     val term: Term,
     val periods: Map<Int, TimeRange>,
     val arrangements: List<Arrangement>,
     val unscheduled: List<String>,
-    val lastSuccessfulCheck: Instant,
+    val lastSuccessfulCheck: Instant?,
+    val revision: Long = 1,
+    val colors: Map<UUID, CourseColor> = emptyMap(),
+    val origins: Map<UUID, CourseOrigin> = emptyMap(),
+    val academicYear: String = scope?.year ?: term.firstMonday.year.toString(),
+    val semester: String = scope?.semester ?: "0",
 )
 
 sealed interface ImportOutcome {
@@ -59,12 +65,15 @@ sealed interface ImportOutcome {
     data object ChangedSourceNeedsReview : ImportOutcome
     data object DifferentAccount : ImportOutcome
     data object DifferentTermConfiguration : ImportOutcome
+    data object LocalTermConfirmationRequired : ImportOutcome
 }
 
 interface ScheduleRepository {
     fun observeSchedules(): Flow<List<SavedSchedule>>
     suspend fun confirmImport(plan: ImportPlan): ImportOutcome
     suspend fun checkSource(expected: SourceScope?, fetch: suspend () -> SchoolSnapshot): CheckedSource
+    suspend fun saveArrangement(termId: UUID, expectedRevision: Long, edit: ArrangementEdit): EditOutcome
+    suspend fun createManualTerm(plan: ManualTermPlan): ManualTermOutcome
 }
 
 data class CheckedSource(val snapshot: SchoolSnapshot, val fetchedAt: Instant, val outcome: ImportOutcome?)

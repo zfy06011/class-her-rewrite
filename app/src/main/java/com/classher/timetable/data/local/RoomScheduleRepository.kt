@@ -14,15 +14,17 @@ class RoomScheduleRepository(private val database: ScheduleDatabase, private val
 
     override fun observeSchedules(): Flow<List<SavedSchedule>> = dao.observe().map { rows -> rows.map { row ->
         val term = row.term
+        val periods = row.periods.associate { it.number to TimeRange(LocalTime.parse(it.start), LocalTime.parse(it.end)) }
         SavedSchedule(
-            UUID.fromString(term.id), "${term.year} 学年 · 第 ${term.semester.toInt() + 1} 学期",
-            SourceScope(term.accountDigest, term.year, term.semester), Term(LocalDate.parse(term.firstMonday), term.weekCount),
-            row.periods.associate { it.number to TimeRange(LocalTime.parse(it.start), LocalTime.parse(it.end)) },
-            row.projections.map { projection -> projection.fields.let { fields ->
-                Arrangement(UUID.fromString(projection.id), fields.name, fields.teacher, fields.room, fields.weekday,
-                    decodeSet(fields.weeks), MeetingTime.Periods(decodeSet(fields.periods)))
-            } }.sortedWith(compareBy({ it.weekday }, { (it.time as MeetingTime.Periods).numbers.min() }, { it.name })),
-            row.unscheduled.map { it.name }.sorted(), Instant.ofEpochMilli(term.checkedAt),
+            UUID.fromString(term.id), "${term.year} 学年 · 第 ${term.semester.toInt() + 1} 学期${if (term.school == "local") "（手工）" else ""}",
+            if (term.school == "local") null else SourceScope(term.accountDigest, term.year, term.semester), Term(LocalDate.parse(term.firstMonday), term.weekCount),
+            periods,
+            row.projections.filter { projection -> row.identities.any { it.id == projection.id && !it.hidden } }
+                .map(::arrangement).sortedWith(compareBy({ it.weekday }, { it.time.ranges(periods).first().start }, { it.name })),
+            row.unscheduled.map { it.name }.sorted(), if (term.school == "local") null else Instant.ofEpochMilli(term.checkedAt),
+            term.revision, row.identities.associate { UUID.fromString(it.id) to CourseColor.entries[it.colorSlot] },
+            row.identities.associate { UUID.fromString(it.id) to when (it.origin) { "school" -> CourseOrigin.SCHOOL; "manual" -> CourseOrigin.MANUAL; else -> error("Unsupported saved course origin") } },
+            term.year, term.semester,
         )
     } }
 
@@ -38,8 +40,8 @@ class RoomScheduleRepository(private val database: ScheduleDatabase, private val
         if (expected != null && snapshot.scope != expected) throw SchoolException(SchoolFailure.IDENTITY_MISMATCH)
         val outcome = database.withTransaction {
             val terms = dao.terms()
-            if (terms.any { it.accountDigest != snapshot.scope.accountDigest }) return@withTransaction ImportOutcome.DifferentAccount
-            val old = terms.singleOrNull { it.year == snapshot.scope.year && it.semester == snapshot.scope.semester }
+            if (terms.any { it.school == "sdwu" && it.accountDigest != snapshot.scope.accountDigest }) return@withTransaction ImportOutcome.DifferentAccount
+            val old = terms.singleOrNull { it.school == "sdwu" && it.year == snapshot.scope.year && it.semester == snapshot.scope.semester }
                 ?: return@withTransaction null
             if (snapshot.doubts.any { it.kind == DoubtKind.OTHER }) return@withTransaction null
             val periods = dao.periods(old.id).associate { it.number to TimeRange(LocalTime.parse(it.start), LocalTime.parse(it.end)) }
@@ -56,8 +58,8 @@ class RoomScheduleRepository(private val database: ScheduleDatabase, private val
         val snapshot = plan.snapshot
         val terms = dao.terms()
         // 首版只绑定一个学校账号；切换不会覆盖或混入原课程。
-        if (terms.any { it.accountDigest != snapshot.scope.accountDigest }) return ImportOutcome.DifferentAccount
-        val old = terms.singleOrNull { it.year == snapshot.scope.year && it.semester == snapshot.scope.semester }
+        if (terms.any { it.school == "sdwu" && it.accountDigest != snapshot.scope.accountDigest }) return ImportOutcome.DifferentAccount
+        val old = terms.singleOrNull { it.school == "sdwu" && it.year == snapshot.scope.year && it.semester == snapshot.scope.semester }
         if (old != null) {
             if (old.firstMonday != plan.term.firstMonday.toString() || old.weekCount != plan.term.weekCount ||
                 dao.periods(old.id).associate { it.number to TimeRange(LocalTime.parse(it.start), LocalTime.parse(it.end)) } != plan.periods
@@ -70,12 +72,22 @@ class RoomScheduleRepository(private val database: ScheduleDatabase, private val
             dao.checked(old.id, maxOf(old.checkedAt, plan.fetchedAt.toEpochMilli()))
             return ImportOutcome.Saved(UUID.fromString(old.id), alreadySaved = true)
         }
-        val termId = UUID.randomUUID().toString()
-        dao.insertTerm(TermEntity(id = termId, accountDigest = snapshot.scope.accountDigest,
-            year = snapshot.scope.year, semester = snapshot.scope.semester,
-            firstMonday = plan.term.firstMonday.toString(), weekCount = plan.term.weekCount,
-            checkedAt = plan.fetchedAt.toEpochMilli()))
-        dao.insertPeriods(plan.periods.map { (number, time) -> PeriodEntity(termId, number, time.start.toString(), time.end.toString()) })
+        val local = terms.singleOrNull { it.school == "local" && it.year == snapshot.scope.year && it.semester == snapshot.scope.semester }
+        if (local != null) {
+            if (local.firstMonday != plan.term.firstMonday.toString() || local.weekCount != plan.term.weekCount ||
+                dao.periods(local.id).associate { it.number to TimeRange(LocalTime.parse(it.start), LocalTime.parse(it.end)) } != plan.periods
+            ) return ImportOutcome.DifferentTermConfiguration
+            if (plan.attachToLocalTerm?.toString() != local.id) return ImportOutcome.LocalTermConfirmationRequired
+        }
+        val termId = local?.id ?: UUID.randomUUID().toString()
+        if (local != null) dao.bindSchool(termId, snapshot.scope.accountDigest, plan.fetchedAt.toEpochMilli())
+        else {
+            dao.insertTerm(TermEntity(id = termId, accountDigest = snapshot.scope.accountDigest,
+                year = snapshot.scope.year, semester = snapshot.scope.semester,
+                firstMonday = plan.term.firstMonday.toString(), weekCount = plan.term.weekCount,
+                checkedAt = plan.fetchedAt.toEpochMilli()))
+            dao.insertPeriods(plan.periods.map { (number, time) -> PeriodEntity(termId, number, time.start.toString(), time.end.toString()) })
+        }
         val ids = snapshot.meetings.associateWith { UUID.randomUUID().toString() }
         dao.insertIdentities(ids.values.map { IdentityEntity(it, termId) })
         dao.insertBaselines(ids.map { (meeting, id) -> BaselineEntity(id, fields(meeting)) })
@@ -88,4 +100,85 @@ class RoomScheduleRepository(private val database: ScheduleDatabase, private val
     private fun fields(meeting: ParsedMeeting) = MeetingFields(meeting.name, meeting.teacher, meeting.room,
         meeting.weekday, meeting.weeks.sorted().joinToString(","), meeting.periods.sorted().joinToString(","))
     private fun decodeSet(value: String): Set<Int> = value.split(",").map(String::toInt).toSet()
+
+    private fun arrangement(projection: ProjectionEntity): Arrangement {
+        val fields = projection.fields
+        val time = when (fields.timeMode) {
+            "periods" -> MeetingTime.Periods(decodeSet(fields.periods))
+            "custom" -> MeetingTime.Custom(TimeRange(LocalTime.parse(fields.customStart), LocalTime.parse(fields.customEnd)))
+            else -> error("Unsupported saved time mode")
+        }
+        return Arrangement(UUID.fromString(projection.id), fields.name, fields.teacher, fields.room, fields.weekday, decodeSet(fields.weeks), time)
+    }
+
+    private fun fields(arrangement: Arrangement): MeetingFields = when (val time = arrangement.time) {
+        is MeetingTime.Periods -> MeetingFields(arrangement.name, arrangement.teacher, arrangement.room,
+            arrangement.weekday, arrangement.weeks.sorted().joinToString(","), time.numbers.sorted().joinToString(","))
+        is MeetingTime.Custom -> MeetingFields(arrangement.name, arrangement.teacher, arrangement.room,
+            arrangement.weekday, arrangement.weeks.sorted().joinToString(","), "", "custom", time.range.start.toString(), time.range.end.toString())
+    }
+
+    override suspend fun saveArrangement(termId: UUID, expectedRevision: Long, edit: ArrangementEdit): EditOutcome {
+        try { return gate.tryWrite { database.withTransaction {
+            val term = dao.terms().singleOrNull { it.id == termId.toString() } ?: return@withTransaction EditOutcome.Missing
+            if (term.revision != expectedRevision) return@withTransaction EditOutcome.Stale
+            val periods = dao.periods(term.id).associate { it.number to TimeRange(LocalTime.parse(it.start), LocalTime.parse(it.end)) }
+            edit.validate(Term(LocalDate.parse(term.firstMonday), term.weekCount), periods)
+            val id = edit.id ?: UUID.randomUUID()
+            val old = if (edit.id == null) null else dao.identity(id.toString())
+            if (edit.id != null && (old == null || old.termId != term.id || old.hidden)) return@withTransaction EditOutcome.Missing
+            val candidate = edit.arrangement(id)
+            val newFields = fields(candidate)
+            val projections = dao.projections(term.id)
+            val previous = projections.singleOrNull { it.id == id.toString() }
+            if (old != null && previous == null) return@withTransaction EditOutcome.Missing
+            // 不让整条修改静默遗失已有单次例外的关联。具体调课界面另行实现。
+            if (previous != null && dao.exceptions(id.toString()).isNotEmpty() &&
+                (previous.fields.weekday != newFields.weekday || previous.fields.weeks != newFields.weeks ||
+                    previous.fields.periods != newFields.periods || previous.fields.timeMode != newFields.timeMode ||
+                    previous.fields.customStart != newFields.customStart || previous.fields.customEnd != newFields.customEnd)
+            ) return@withTransaction EditOutcome.ExceptionReviewRequired
+            val visibleIds = dao.identities(term.id).filterNot { it.hidden }.map { it.id }.toSet()
+            val conflicts = overlappingArrangementIds(candidate, projections.filter { it.id in visibleIds }.map(::arrangement), periods).size
+            if (old == null) dao.insertIdentities(listOf(IdentityEntity(id.toString(), term.id, origin = "manual", colorSlot = edit.color.ordinal)))
+            else {
+                if (old.origin == "school") {
+                    val baseline = dao.baselines(term.id).single { it.id == id.toString() }.fields
+                    val scheduleChanged = baseline.weekday != newFields.weekday || baseline.weeks != newFields.weeks || baseline.periods != newFields.periods ||
+                        baseline.timeMode != newFields.timeMode || baseline.customStart != newFields.customStart || baseline.customEnd != newFields.customEnd
+                    dao.putOverride(OverrideEntity(id.toString(),
+                        name = newFields.name.takeUnless { it == baseline.name }, teacher = newFields.teacher.takeUnless { it == baseline.teacher },
+                        room = newFields.room.takeUnless { it == baseline.room }, weekday = newFields.weekday.takeIf { scheduleChanged },
+                        weeks = newFields.weeks.takeIf { scheduleChanged }, timeMode = newFields.timeMode.takeIf { scheduleChanged },
+                        periods = newFields.periods.takeIf { scheduleChanged }, customStart = newFields.customStart.takeIf { scheduleChanged },
+                        customEnd = newFields.customEnd.takeIf { scheduleChanged }))
+                }
+                dao.color(id.toString(), edit.color.ordinal)
+            }
+            if (old == null || old.origin == "manual") dao.putManual(ManualEntity(id.toString(), newFields))
+            dao.putProjection(ProjectionEntity(id.toString(), term.id, newFields))
+            dao.edited(term.id)
+            EditOutcome.Saved(id, conflicts)
+        } } } catch (_: ScheduleBusyException) { return EditOutcome.Busy } catch (_: IllegalArgumentException) { return EditOutcome.Invalid }
+    }
+
+    override suspend fun createManualTerm(plan: ManualTermPlan): ManualTermOutcome {
+        try {
+            plan.validate()
+            return gate.tryWrite { database.withTransaction {
+                val existing = dao.terms().singleOrNull { it.year == plan.academicYear && it.semester == plan.semester }
+                if (existing != null) {
+                    val periods = dao.periods(existing.id).associate { it.number to TimeRange(LocalTime.parse(it.start), LocalTime.parse(it.end)) }
+                    if (existing.firstMonday != plan.term.firstMonday.toString() || existing.weekCount != plan.term.weekCount || periods != plan.periods)
+                        return@withTransaction ManualTermOutcome.DifferentConfiguration
+                    return@withTransaction ManualTermOutcome.Saved(UUID.fromString(existing.id))
+                }
+                val id = UUID.randomUUID().toString()
+                dao.insertTerm(TermEntity(id = id, school = "local", accountDigest = "", year = plan.academicYear,
+                    semester = plan.semester, firstMonday = plan.term.firstMonday.toString(), weekCount = plan.term.weekCount, checkedAt = 0))
+                dao.insertPeriods(plan.periods.map { (number, range) -> PeriodEntity(id, number, range.start.toString(), range.end.toString()) })
+                ManualTermOutcome.Saved(UUID.fromString(id))
+            } }
+        } catch (_: ScheduleBusyException) { return ManualTermOutcome.Busy } catch (_: IllegalArgumentException) { return ManualTermOutcome.Invalid }
+    }
 }

@@ -26,6 +26,12 @@ data class TimetableState(
     val weekCount: Int = 19,
     val periodsPerDay: Int = 12,
     val importedId: UUID? = null,
+    val editing: Boolean = false,
+    val editMessage: String = "",
+    val editedId: UUID? = null,
+    val createdTermId: UUID? = null,
+    val editor: EditorSession? = null,
+    val creatingTerm: Boolean = false,
 ) {
     val selected: SavedSchedule? get() = schedules.firstOrNull { it.id == selectedId } ?: schedules.firstOrNull()
     val busy: Boolean get() = running || saving
@@ -68,7 +74,7 @@ class TimetableViewModel @Inject constructor(
                     mutable.update { it.copy(loading = false, loadFailed = false, schedules = schedules, selectedId = id) }
                     if (first) {
                         first = false
-                        mutable.value.selected?.let { policy.succeeded(it.lastSuccessfulCheck) }
+                        mutable.value.selected?.lastSuccessfulCheck?.let(policy::succeeded)
                         maybeCheck()
                     }
                 }
@@ -77,9 +83,9 @@ class TimetableViewModel @Inject constructor(
     }
 
     fun selectTerm(id: UUID) {
-        if (!mutable.value.busy) {
+        if (!mutable.value.busy && !mutable.value.editing) {
             mutable.update { it.copy(selectedId = id) }
-            mutable.value.selected?.let { policy.succeeded(it.lastSuccessfulCheck) }
+            mutable.value.selected?.lastSuccessfulCheck?.let(policy::succeeded)
         }
     }
     fun setTheme(theme: ThemePreference) {
@@ -97,15 +103,19 @@ class TimetableViewModel @Inject constructor(
     fun onBackground() { foreground = false; cancelFetch() }
     private fun maybeCheck() {
         val saved = mutable.value.selected ?: return
+        if (saved.scope == null) return
         // 只自动检查正在进行的学期；历史学期仍可离线查看。
         if (foreground && !mutable.value.loading && saved.term.weekOf(LocalDate.now(SchoolZone)) != null &&
-            policy.shouldCheck(Instant.now(), online, editing = mutable.value.draft != null, running = mutable.value.busy)
+            policy.shouldCheck(Instant.now(), online, editing = mutable.value.draft != null || mutable.value.editing, running = mutable.value.busy)
         ) foregroundGateway?.let { check(it, automatic = true) }
     }
 
     fun check(gateway: SchoolGateway, automatic: Boolean = false, useStoredConfig: Boolean = false) {
         val before = mutable.value
-        if (before.busy || before.loading || before.loadFailed) return
+        if (before.busy || before.loading || before.loadFailed || before.editing) return
+        if (useStoredConfig && before.selected?.scope == null) {
+            mutable.update { it.copy(status = "此学期尚未接入学校，可在学校导入页确认接入。") }; return
+        }
         mutable.update { it.copy(running = true, status = "正在获取并解析，已保存课表仍可查看…", importedId = null) }
         fetchJob = viewModelScope.launch {
             try {
@@ -134,20 +144,20 @@ class TimetableViewModel @Inject constructor(
                 policy.failed(fetchedAt, loginRequired = false)
                 mutable.update { it.copy(running = false, draft = ImportDraft(UUID.randomUUID(), next, fetchedAt),
                     repeatedIdentically = before.draft?.snapshot?.sameContent(next), status = status) }
-            } catch (_: TimeoutCancellationException) { failure(SchoolFailure.TIMEOUT) } catch (error: CancellationException) {
+            } catch (_: ScheduleBusyException) { mutable.update { it.copy(status = "课表正在更新或保存，请稍后重试。原课表保留。") } } catch (_: TimeoutCancellationException) { failure(SchoolFailure.TIMEOUT) } catch (error: CancellationException) {
                 mutable.update { it.copy(status = "获取已取消，课表和原预览保留。") }; throw error
             } catch (error: SchoolException) { failure(error.failure) } catch (_: Exception) { failure(SchoolFailure.INVALID_DATA) } finally { mutable.update { it.copy(running = false) } }
         }
     }
 
-    fun save(draftId: UUID, term: Term, periods: Map<Int, TimeRange>, acknowledged: Set<Int>) {
+    fun save(draftId: UUID, term: Term, periods: Map<Int, TimeRange>, acknowledged: Set<Int>, attachToLocalTerm: UUID? = null) {
         val current = mutable.value
         val draft = current.draft?.takeIf { it.id == draftId } ?: return
-        if (current.busy) return
+        if (current.busy || current.editing) return
         mutable.update { it.copy(saving = true, status = "正在保存到本机…") }
         viewModelScope.launch {
             try {
-                val result = repository.confirmImport(ImportPlan(draft.snapshot, term, periods, acknowledged, draft.fetchedAt))
+                val result = repository.confirmImport(ImportPlan(draft.snapshot, term, periods, acknowledged, draft.fetchedAt, attachToLocalTerm))
                 when (result) {
                     is ImportOutcome.Saved -> {
                         policy.succeeded(draft.fetchedAt)
@@ -157,8 +167,9 @@ class TimetableViewModel @Inject constructor(
                     ImportOutcome.ChangedSourceNeedsReview -> mutable.update { it.copy(status = "同学期来源已变化，原课表保留。请等待变更核对功能。") }
                     ImportOutcome.DifferentAccount -> mutable.update { it.copy(status = "学校账号与已保存课表不同，已拒绝混入。") }
                     ImportOutcome.DifferentTermConfiguration -> mutable.update { it.copy(status = "学期起点或作息与已保存配置不同，原课表保留。") }
+                    ImportOutcome.LocalTermConfirmationRequired -> mutable.update { it.copy(status = "此学期已有手工课程，请确认保留它们并接入学校课表。") }
                 }
-            } catch (error: CancellationException) { throw error } catch (_: Exception) { mutable.update { it.copy(status = "未能保存，请检查日期、周数、作息和核对项。原课表未改变。") } } finally { mutable.update { it.copy(saving = false) } }
+            } catch (_: ScheduleBusyException) { mutable.update { it.copy(status = "课表正在更新，稍后再确认导入。原课表保留。") } } catch (error: CancellationException) { throw error } catch (_: Exception) { mutable.update { it.copy(status = "未能保存，请检查日期、周数、作息和核对项。原课表未改变。") } } finally { mutable.update { it.copy(saving = false) } }
         }
     }
 
@@ -181,4 +192,53 @@ class TimetableViewModel @Inject constructor(
     fun clearPreview() { if (!mutable.value.busy) mutable.update { it.copy(draft = null, repeatedIdentically = null, status = "预览已清除，本地课表保留。") } }
     fun schoolSessionCleared() { policy.failed(Instant.now(), loginRequired = true) }
     fun consumeImported() { mutable.update { it.copy(importedId = null) } }
+
+    fun beginEditing(): Boolean {
+        val current = mutable.value
+        if (current.busy || current.loading || current.loadFailed) return false
+        mutable.update { it.copy(editing = true, editMessage = "", editedId = null, createdTermId = null) }
+        return true
+    }
+    fun endEditing() {
+        if (!mutable.value.saving) { mutable.update { it.copy(editing = false, editor = null, creatingTerm = false, editMessage = "") }; maybeCheck() }
+    }
+    fun openEditor(id: UUID?) {
+        val saved = mutable.value.selected ?: return
+        val initial = id?.let { courseId -> saved.arrangements.firstOrNull { it.id == courseId } ?: return }
+        if (beginEditing()) mutable.update { it.copy(editor = EditorSession(saved, initial), creatingTerm = false) }
+    }
+    fun openManualTerm() { if (beginEditing()) mutable.update { it.copy(editor = null, creatingTerm = true) } }
+    fun saveEdit(saved: SavedSchedule, edit: ArrangementEdit) {
+        if (mutable.value.busy || !mutable.value.editing) return
+        mutable.update { it.copy(saving = true, editMessage = "正在保存…") }
+        viewModelScope.launch {
+            try {
+                when (val result = repository.saveArrangement(saved.id, saved.revision, edit)) {
+                    is EditOutcome.Saved -> mutable.update { it.copy(editedId = result.arrangementId,
+                        status = if (result.overlappingArrangements == 0) "课程已保存。" else "课程已保存，与 ${result.overlappingArrangements} 条安排时间重叠。", editMessage = "") }
+                    EditOutcome.Busy -> mutable.update { it.copy(editMessage = "课表正在更新，稍后再保存。") }
+                    EditOutcome.Stale -> mutable.update { it.copy(editMessage = "课表已变化，请返回并重新打开编辑。此次未写入。") }
+                    EditOutcome.Missing -> mutable.update { it.copy(editMessage = "这条安排已不可编辑，请返回刷新。") }
+                    EditOutcome.Invalid -> mutable.update { it.copy(editMessage = "请检查课程名、周次和时间范围。") }
+                    EditOutcome.ExceptionReviewRequired -> mutable.update { it.copy(editMessage = "调整会影响已有单次例外，请先处理相关例外。此次未写入。") }
+                }
+            } catch (error: CancellationException) { throw error } catch (_: Exception) { mutable.update { it.copy(editMessage = "保存失败，原课程未改变。") } } finally { mutable.update { it.copy(saving = false) } }
+        }
+    }
+    fun createManualTerm(plan: ManualTermPlan) {
+        if (mutable.value.busy || !mutable.value.editing) return
+        mutable.update { it.copy(saving = true, editMessage = "正在建立学期…") }
+        viewModelScope.launch {
+            try {
+                when (val result = repository.createManualTerm(plan)) {
+                    is ManualTermOutcome.Saved -> mutable.update { it.copy(selectedId = result.termId, createdTermId = result.termId, editMessage = "") }
+                    ManualTermOutcome.DifferentConfiguration -> mutable.update { it.copy(editMessage = "同一学期已有不同配置，请返回查看原学期。此次未改变原数据。") }
+                    ManualTermOutcome.Busy -> mutable.update { it.copy(editMessage = "课表正在更新，稍后再建立学期。") }
+                    ManualTermOutcome.Invalid -> mutable.update { it.copy(editMessage = "请检查学年、起点、周数和作息。") }
+                }
+            } catch (error: CancellationException) { throw error } catch (_: Exception) { mutable.update { it.copy(editMessage = "建立失败，原课表保留。") } } finally { mutable.update { it.copy(saving = false) } }
+        }
+    }
+    fun consumeEdited() { mutable.update { it.copy(editedId = null, editing = false, editor = null, creatingTerm = false) }; maybeCheck() }
+    fun consumeCreatedTerm() { mutable.update { it.copy(createdTermId = null) } }
 }

@@ -38,11 +38,25 @@ private fun times(ranges: List<TimeRange>) = ranges.joinToString(" / ") { "${it.
 
 @Composable
 fun TimetableApp(state: TimetableState, model: TimetableViewModel, openSchool: () -> Unit, fetch: () -> Unit, checkUpdates: () -> Unit, logout: () -> Unit) {
-    var page by rememberSaveable { mutableStateOf(0) }
+    var page by rememberSaveable { mutableIntStateOf(0) }
     var importing by rememberSaveable { mutableStateOf(false) }
     var detailId by remember { mutableStateOf<UUID?>(null) }
     LaunchedEffect(state.importedId) {
         if (state.importedId != null) { importing = false; page = 0; model.consumeImported() }
+    }
+    LaunchedEffect(state.editedId) { if (state.editedId != null) { detailId = null; model.consumeEdited() } }
+    LaunchedEffect(state.createdTermId, state.selected?.id, state.saving) {
+        if (state.createdTermId != null && state.createdTermId == state.selected?.id && !state.saving) model.openEditor(null)
+    }
+    val editor = state.editor
+    if (editor != null) {
+        ArrangementEditor(editor, state.saving, state.editMessage, onCancel = model::endEditing,
+            onSave = { model.saveEdit(editor.schedule, it) })
+        return
+    }
+    if (state.creatingTerm) {
+        ManualTermEditor(state.saving, state.editMessage, onCancel = model::endEditing, onSave = model::createManualTerm)
+        return
     }
     BackHandler(importing) { if (!state.saving) importing = false }
     Scaffold(bottomBar = { if (!importing) NavigationBar {
@@ -58,7 +72,10 @@ fun TimetableApp(state: TimetableState, model: TimetableViewModel, openSchool: (
                     Text(if (importing) "把学校课表收进自己的手账" else "今天也按自己的节奏", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 if (importing) TextButton(onClick = { importing = false }, enabled = !state.saving) { Text("返回") }
-                else TextButton(onClick = { importing = true }) { Text("学校导入") }
+                else {
+                    if (state.selected != null) TextButton(onClick = { detailId = null; model.openEditor(null) }, enabled = !state.busy) { Text("新增") }
+                    TextButton(onClick = { importing = true }) { Text("学校导入") }
+                }
             }
             when {
                 state.loading -> { LinearProgressIndicator(Modifier.fillMaxWidth()); Text("正在读取本地课表…", Modifier.padding(16.dp)) }
@@ -74,7 +91,7 @@ fun TimetableApp(state: TimetableState, model: TimetableViewModel, openSchool: (
                     }
                     val selected = state.selected
                     if (state.busy) LinearProgressIndicator(Modifier.fillMaxWidth())
-                    if (selected == null && page != 2) EmptySchedule { importing = true }
+                    if (selected == null && page != 2) EmptySchedule(onImport = { importing = true }, onManual = model::openManualTerm)
                     else when (page) {
                         0 -> selected?.let { TodayScreen(it, state.status) { course -> detailId = course } }
                         1 -> selected?.let { WeekScreen(it) { course -> detailId = course } }
@@ -86,25 +103,28 @@ fun TimetableApp(state: TimetableState, model: TimetableViewModel, openSchool: (
     }
     val selected = state.selected
     val detail = selected?.arrangements?.firstOrNull { it.id == detailId }
-    if (detail != null && selected != null) AlertDialog(onDismissRequest = { detailId = null }, title = { Text(detail.name) }, text = {
+    if (detail != null) AlertDialog(onDismissRequest = { detailId = null }, title = { Text(detail.name) }, text = {
         Column(verticalArrangement = LayoutArrangement.spacedBy(8.dp)) {
-            Text("教师：${detail.teacher}")
-            Text("地点：${detail.room.ifBlank { "学校未提供（已确认）" }}")
+            Text(if (selected.origins[detail.id] == CourseOrigin.MANUAL) "手工课程" else "学校课程")
+            Text("教师：${detail.teacher.ifBlank { "未填写" }}")
+            Text("地点：${detail.room.ifBlank { "未填写" }}")
             Text("星期${dayNames[detail.weekday - 1]} · ${times(detail.time.ranges(selected.periods))}")
             Text("周次：${detail.weeks.sorted().joinToString("、")}")
             val time = detail.time
             if (time is MeetingTime.Periods) Text("节次：${time.numbers.sorted().joinToString("、")}")
         }
-    }, confirmButton = { TextButton(onClick = { detailId = null }) { Text("完成") } })
+    }, confirmButton = { TextButton(onClick = { detailId = null; model.openEditor(detail.id) }, enabled = !state.busy) { Text("编辑整条安排") } },
+        dismissButton = { TextButton(onClick = { detailId = null }) { Text("完成") } })
 }
 
 @Composable
-private fun EmptySchedule(onImport: () -> Unit) {
+private fun EmptySchedule(onImport: () -> Unit, onManual: () -> Unit) {
     Column(Modifier.verticalScroll(rememberScrollState()).padding(32.dp), verticalArrangement = LayoutArrangement.spacedBy(16.dp)) {
         Image(painterResource(R.drawable.ic_launcher_foreground), contentDescription = null, modifier = Modifier.size(96.dp))
         Text("新学期，从一张课表开始", style = MaterialTheme.typography.headlineSmall)
         Text("登录学校并确认导入。保存后，即使没有网络也能查看。", color = MaterialTheme.colorScheme.onSurfaceVariant)
         Button(onClick = onImport) { Text("导入学校课表") }
+        OutlinedButton(onClick = onManual) { Text("离线手工录课") }
     }
 }
 
@@ -138,20 +158,20 @@ private fun TodayScreen(saved: SavedSchedule, status: String, onCourse: (UUID) -
         item { Text("今日课程", style = MaterialTheme.typography.titleMedium) }
         if (summary.entries.isEmpty()) item { Text("今天没有课程，好好安排自己的时间。", Modifier.padding(vertical = 12.dp), color = MaterialTheme.colorScheme.onSurfaceVariant) }
         items(summary.entries, key = { "${it.occurrence.arrangementId}:${it.occurrence.originalDate}" }) { entry ->
-            CourseCard(entry.occurrence, entry.ended, entry.conflicting) { onCourse(entry.occurrence.arrangementId) }
+            CourseCard(entry.occurrence, entry.ended, entry.conflicting, saved.colors[entry.occurrence.arrangementId] ?: CourseColor.PINK) { onCourse(entry.occurrence.arrangementId) }
         }
         item { Text(status, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
     }
 }
 
 @Composable
-private fun CourseCard(course: Occurrence, ended: Boolean, conflict: Boolean, click: () -> Unit) {
+private fun CourseCard(course: Occurrence, ended: Boolean, conflict: Boolean, color: CourseColor, click: () -> Unit) {
     Card(onClick = click, modifier = Modifier.fillMaxWidth().alpha(if (ended) 0.65f else 1f),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)) {
+        colors = CardDefaults.cardColors(containerColor = LocalCourseColors.current[color.ordinal], contentColor = MaterialTheme.colorScheme.onSurface)) {
         Column(Modifier.padding(16.dp), verticalArrangement = LayoutArrangement.spacedBy(4.dp)) {
             Text(times(course.ranges), style = MaterialTheme.typography.labelLarge)
             Text(course.name, style = MaterialTheme.typography.titleMedium)
-            Text(course.room.ifBlank { "地点未提供（已确认）" }, style = MaterialTheme.typography.bodyMedium)
+            Text(course.room.ifBlank { "地点未填写" }, style = MaterialTheme.typography.bodyMedium)
             if (ended) Text("已结束", style = MaterialTheme.typography.labelSmall)
             if (conflict) Text("时间重叠", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.labelLarge)
         }
@@ -160,7 +180,7 @@ private fun CourseCard(course: Occurrence, ended: Boolean, conflict: Boolean, cl
 
 @Composable
 private fun WeekScreen(saved: SavedSchedule, onCourse: (UUID) -> Unit) {
-    var week by rememberSaveable(saved.id.toString()) { mutableStateOf(saved.term.weekOf(LocalDate.now(SchoolZone)) ?: 1) }
+    var week by rememberSaveable(saved.id.toString()) { mutableIntStateOf(saved.term.weekOf(LocalDate.now(SchoolZone)) ?: 1) }
     val all = remember(saved) { occurrences(saved.term, saved.arrangements, emptyList(), saved.periods) }
     val monday = saved.term.dateOf(week, 1)
     val visible = all.filter { it.date in monday..monday.plusDays(6) }
@@ -170,15 +190,21 @@ private fun WeekScreen(saved: SavedSchedule, onCourse: (UUID) -> Unit) {
         TextButton(onClick = { week++ }, enabled = week < saved.term.weekCount) { Text("下一周") }
     }
     Text("左右滑动查看周末 · 点课程查看详情", Modifier.padding(horizontal = 16.dp, vertical = 8.dp), style = MaterialTheme.typography.bodySmall)
-    val start = saved.periods.values.minOf { it.start }.toSecondOfDay() / 60
-    val end = saved.periods.values.maxOf { it.end }.toSecondOfDay() / 60
+    val start = (saved.periods.values.map { it.start } + visible.flatMap { it.ranges.map { range -> range.start } }).min().toSecondOfDay() / 60
+    val end = (saved.periods.values.map { it.end } + visible.flatMap { it.ranges.map { range -> range.end } }).max().toSecondOfDay() / 60
     val minuteScale = 1.2f
     val dailyLanes = (1..7).map { day ->
         val segments = visible.filter { it.date.dayOfWeek.value == day }.flatMap { course -> course.ranges.map { LessonSegment(course, it) } }
             .sortedWith(compareBy({ it.range.start }, { it.range.end }, { it.occurrence.arrangementId.toString() }))
         val lanes = mutableListOf<MutableList<LessonSegment>>()
         segments.forEach { segment ->
-            val lane = lanes.firstOrNull { entries -> entries.none { it.range.overlaps(segment.range) } }
+            val lane = lanes.firstOrNull { entries -> entries.none { entry ->
+                val entryStart = entry.range.start.toSecondOfDay() / 60f
+                val entryEnd = maxOf(entry.range.end.toSecondOfDay() / 60f, entryStart + 52f / minuteScale)
+                val segmentStart = segment.range.start.toSecondOfDay() / 60f
+                val segmentEnd = maxOf(segment.range.end.toSecondOfDay() / 60f, segmentStart + 52f / minuteScale)
+                entryStart < segmentEnd && segmentStart < entryEnd
+            } }
                 ?: mutableListOf<LessonSegment>().also { lanes.add(it) }
             lane.add(segment)
         }
@@ -194,7 +220,7 @@ private fun WeekScreen(saved: SavedSchedule, onCourse: (UUID) -> Unit) {
             }
         }
         Row {
-            Box(Modifier.width(56.dp).height(((end - start) * minuteScale + 48).dp)) {
+            Box(Modifier.width(56.dp).height(((end - start) * minuteScale + 64).dp)) {
                 saved.periods.toSortedMap().forEach { (number, range) ->
                     Column(Modifier.offset(y = ((range.start.toSecondOfDay() / 60 - start) * minuteScale).dp).padding(start = 8.dp)) {
                         Text("$number", style = MaterialTheme.typography.labelLarge)
@@ -205,13 +231,13 @@ private fun WeekScreen(saved: SavedSchedule, onCourse: (UUID) -> Unit) {
             for (day in 1..7) {
                 val lanes = dailyLanes[day - 1]
                 val width = dayWidths[day - 1] / lanes.size.coerceAtLeast(1)
-                Box(Modifier.width(dayWidths[day - 1].dp).height(((end - start) * minuteScale + 48).dp)) {
+                Box(Modifier.width(dayWidths[day - 1].dp).height(((end - start) * minuteScale + 64).dp)) {
                     saved.periods.values.forEach { range -> HorizontalDivider(Modifier.offset(y = ((range.start.toSecondOfDay() / 60 - start) * minuteScale).dp)) }
                     lanes.forEachIndexed { index, lane -> lane.forEach { segment ->
                         Card(onClick = { onCourse(segment.occurrence.arrangementId) },
                             modifier = Modifier.offset(x = (index * width).dp, y = ((segment.range.start.toSecondOfDay() / 60 - start) * minuteScale).dp)
                                 .width(width.dp).height((ChronoUnit.MINUTES.between(segment.range.start, segment.range.end).toInt() * minuteScale).coerceAtLeast(52f).dp).padding(2.dp),
-                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)) {
+                            colors = CardDefaults.cardColors(containerColor = LocalCourseColors.current[(saved.colors[segment.occurrence.arrangementId] ?: CourseColor.PINK).ordinal], contentColor = MaterialTheme.colorScheme.onSurface)) {
                             Column(Modifier.padding(6.dp)) {
                                 Text(segment.occurrence.name, style = MaterialTheme.typography.labelLarge, maxLines = 2, overflow = TextOverflow.Ellipsis)
                                 Text(segment.occurrence.room.ifBlank { "地点未提供" }, style = MaterialTheme.typography.labelSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -235,9 +261,10 @@ private fun SettingsScreen(state: TimetableState, model: TimetableViewModel, onI
         item {
             Row(horizontalArrangement = LayoutArrangement.spacedBy(8.dp)) {
                 Button(onClick = onImport) { Text("学校导入") }
-                OutlinedButton(onClick = fetch, enabled = !state.busy && state.selected != null) { Text("立即检查更新") }
+                OutlinedButton(onClick = fetch, enabled = !state.busy && state.selected?.scope != null) { Text("立即检查更新") }
             }
-            state.selected?.let { Text("上次成功检查：${it.lastSuccessfulCheck.atZone(SchoolZone).format(DateTimeFormatter.ofPattern("MM-dd HH:mm"))}", style = MaterialTheme.typography.bodySmall) }
+            state.selected?.lastSuccessfulCheck?.let { Text("上次成功检查：${it.atZone(SchoolZone).format(DateTimeFormatter.ofPattern("MM-dd HH:mm"))}", style = MaterialTheme.typography.bodySmall) }
+            OutlinedButton(onClick = model::openManualTerm, enabled = !state.busy) { Text("新建手工学期") }
         }
         item {
             Text("外观", style = MaterialTheme.typography.titleMedium)
@@ -251,7 +278,7 @@ private fun SettingsScreen(state: TimetableState, model: TimetableViewModel, onI
             item { Text("学期清单 · 未排课 ${unscheduled.size} 门", style = MaterialTheme.typography.titleMedium); Text("学校未提供固定时间，保留清单并等待安排。", style = MaterialTheme.typography.bodySmall) }
             items(unscheduled) { name -> Card(Modifier.fillMaxWidth()) { Text(name, Modifier.padding(16.dp)) } }
         }
-        item { Text("0.2.0 试用 · 课程保存在此设备", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+        item { Text("0.2.1 试用 · 课程保存在此设备", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
     }
 }
 
@@ -260,6 +287,8 @@ private fun ImportScreen(state: TimetableState, model: TimetableViewModel, openS
     var weeks by rememberSaveable { mutableStateOf(state.weekCount.toString()) }
     var periodCount by rememberSaveable { mutableStateOf(state.periodsPerDay.toString()) }
     val draft = state.draft
+    val localTerm = draft?.let { data -> state.schedules.firstOrNull { it.scope == null && it.academicYear == data.snapshot.scope.year && it.semester == data.snapshot.scope.semester } }
+    var linkConfirmed by remember(draft?.id, localTerm?.id) { mutableStateOf(false) }
     var dateText by remember(draft?.id) { mutableStateOf(if (draft?.snapshot?.scope?.let { it.year == "2026" && it.semester == "0" } == true) "2026-09-14" else "") }
     var starts by remember(draft?.id) { mutableStateOf(sdwuDefaultPeriods().mapValues { it.value.start.format(clockFormat) }) }
     var ends by remember(draft?.id) { mutableStateOf(sdwuDefaultPeriods().mapValues { it.value.end.format(clockFormat) }) }
@@ -300,6 +329,13 @@ private fun ImportScreen(state: TimetableState, model: TimetableViewModel, openS
             item {
                 Text("${snapshot.scope.year} 学年 · 第 ${snapshot.scope.semester.toInt() + 1} 学期", style = MaterialTheme.typography.titleLarge)
                 Text("${snapshot.meetings.size} 条安排 · ${snapshot.unscheduledNames.size} 门未排课")
+                if (localTerm != null) {
+                    Text("同学期已有 ${localTerm.arrangements.size} 条手工安排。接入后全部保留；起点、周数和作息必须一致。")
+                    Row {
+                        Checkbox(linkConfirmed, { linkConfirmed = it }, enabled = !state.busy)
+                        Text("保留手工课程并接入学校", Modifier.padding(top = 12.dp))
+                    }
+                }
                 state.repeatedIdentically?.let { Text(if (it) "两次来源与内容一致" else "本次获取内容有变化") }
                 OutlinedTextField(dateText, { dateText = it.take(10); confirmed = false }, label = { Text("第一教学周周一（yyyy-MM-dd）") }, modifier = Modifier.fillMaxWidth(), enabled = !state.busy,
                     isError = dateText.isNotBlank() && date?.dayOfWeek != DayOfWeek.MONDAY)
@@ -331,7 +367,7 @@ private fun ImportScreen(state: TimetableState, model: TimetableViewModel, openS
                 } }
             }
             item {
-                Button(onClick = { model.save(draft.id, requireNotNull(term), requireNotNull(parsedPeriods), acknowledged) }, enabled = !state.busy && confirmed && planValid,
+                Button(onClick = { model.save(draft.id, requireNotNull(term), requireNotNull(parsedPeriods), acknowledged, localTerm?.id) }, enabled = !state.busy && confirmed && planValid && (localTerm == null || linkConfirmed),
                     modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text(if (state.saving) "正在保存…" else "确认并保存到本机") }
                 if (!planValid) Text("保存前请完成核对，检查日期、时间和周次范围。", style = MaterialTheme.typography.bodySmall)
                 Text("完整安排预览", Modifier.padding(top = 16.dp), style = MaterialTheme.typography.titleMedium)
