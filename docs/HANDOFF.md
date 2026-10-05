@@ -1,12 +1,12 @@
 # 双轨重写：当前任务交接
 
-更新：2026-10-05（已确认缺失项处理、排课整体组、正式包名及稳定试用签名；本地准备 0.2.0 导入保存／离线读取，见第 17 节）。
+更新：2026-10-05（已确认缺失项处理、排课整体组、正式包名及稳定试用签名；0.2.0 导入保存／离线读取云端检查与稳定签名 APK 已通过，真机待试用，见第 17 节）。
 
 - 当前任务：首版个人课表 MVP；本轮小功能为确认导入、事务保存、关闭后离线读取今日／周课表。整体目标仍未完成。
 - 确认状态：沿用需求、原生技术栈与 AD-1～AD-12；用户已确认第 16.3 节处理决定并授权专用试用签名。用户另已确认无 ID 关联只自动匹配完全一致记录、其余手动配对。本轮先完成首次导入／离线读取，不提前实施跨存储恢复方案。每次推送仍需确认。
 - 当前执行者：Codex；已实测仓库读写、pwsh／Python／Node／Git，之前可读取 Actions 与下载产物。稳定签名在本机生成，Actions Secrets 通过 GitHub 页面保存并核对名称；没有安装或运行本地 JDK／Gradle／Android SDK。
-- 目标分支／基准：`work/android-probe`，远端仍为 `1d1bf526cf7d23ff4ac7935556cae61cd57a87c5`；本轮开始本地 HEAD 为文档提交 `418f37d25ba143a303156526321506b1fda76b30`。公开仓库 [zfy06011/class-her-rewrite](https://github.com/zfy06011/class-her-rewrite)。本轮完成提交后以 Git 记录及推送确认中的实际 SHA 为准，不将旧 APK 证据归给新代码。
-- 进展：0.2.0 导入／本地存储／课程查看与稳定签名工作流已在本地实现；语法及既有 Python／JS 检查通过。Android 编译、50 个 Kotlin 测试、lint、新 APK 与真机重启读取尚待云端／用户验证；尚未推送。
+- 目标分支／构建来源：`work/android-probe`，本次授权推送的准确 SHA 为 `4e4baaa3f5d60a83e533ebe28b5a960e9b3e91f3`，远端 ref 已核对一致。公开仓库 [zfy06011/class-her-rewrite](https://github.com/zfy06011/class-her-rewrite)。本地后续文档记录不代替此构建 SHA。
+- 进展：用户授权推送的 4e4baaa 已通过 Actions run `37315604790`、job `111781446694`；50 tests／0 failures／0 ignored，lint 0 errors／12 warnings；稳定签名 APK 和产物来源核对通过。Room schema v1 已取回；小米 14 正式保存后重开离线读取与 UI 体验仍待用户试用。后续编辑、单次例外、变更合并和备份仍未完成。
 - 文档约定：本文件是唯一当前交接文档。第 8～15 节保留历史证据，当前状态以顶部与第 16～17 节为准。私人课表、会话、密钥及 APK 均不提交。
 
 ## 1. 已确认的首版需求
@@ -574,7 +574,7 @@ GitHub Actions 的第三方步骤固定到本轮 GitHub API 核对的提交 SHA�
 
 ### 已实现
 
-- Room schema v1 分开保存学期、作息、稳定随机 UUID、学校基线、本地覆盖、单次例外、最终投影、缺地点确认和未排课清单。首次导入不创建覆盖或例外；当前 UI 读取已提交的初始投影。导出 schema 从 v1 开启，云端产出随诊断 artifact 上传，构建后需取回并提交生成的 schema JSON；不安装本地工具链手写编译器哈希，不允许 destructive fallback。
+- Room schema v1 分开保存学期、作息、稳定随机 UUID、学校基线、本地覆盖、单次例外、最终投影、缺地点确认和未排课清单。首次导入不创建覆盖或例外；当前 UI 读取已提交的初始投影。导出 schema 从 v1 开启，云端产出随诊断 artifact 上传；本轮已取回实际生成的 schema JSON，随本地结果记录提交；不安装本地工具链手写编译器哈希，不允许 destructive fallback。
 - 公共仓库入口在获取至检查提交期间持有共享写入锁；网络在数据库事务之外，保存相关数据用短事务。首次确认校验来源、星期、明确周集合、作息连续编号／不重叠及每个允许的疑点；任一未知疑点、未确认缺地点或越界值都会拒绝保存。取消或失败释放锁。
 - 相同来源、完整基线和配置重复导入只推进成功检查时间，保留 UUID 和既有课程；不同账号拒绝混入，同学期数据或配置变化保留原课表并提示等待核对。此处没有实现删改合并、待处理冲突落库或无 ID 的变更配对。
 - 页面包含首页今日列表／下一节／结束弱化与重叠提示、可切换教学周的横向周课表、课程详情、历史学期选择、我的页面未排课清单、DataStore 浅色／深色／系统外观。导入页提供起点／周数／逐节作息编辑与显式确认；非周一输入需确认采用同周周一。缺地点提示定位具体安排，未排课课程展示完整名称清单。
@@ -585,7 +585,7 @@ GitHub Actions 的第三方步骤固定到本轮 GitHub API 核对的提交 SHA�
 
 - 专用 RSA-2048 JKS 已生成并读取回验；证书自签名校验通过。本机 `.local-signing/` 被 Git 忽略，目录 ACL 仅当前 Windows 用户与 SYSTEM，私钥和密码不进入源码、日志、HANDOFF 或 APK artifact。密钥不应重新生成，也不应随意删除。
 - 仓库已保存并通过名称列表核对 `CLASSHER_SIGNING_KEYSTORE_B64` 与 `CLASSHER_SIGNING_PASSWORD` 两个 Actions Secrets；结果截图仅在忽略目录，显示名称，不含密钥值。
-- 公开证书 SHA-256：`0772965c1f74eb3ed73e486429e81f8d6985206d3cb2d609c444daa090931e0e`。本轮没有运行云端 apksigner；工作流将在签名后执行完整 APK 校验及指纹比较。
+- 公开证书 SHA-256：`0772965c1f74eb3ed73e486429e81f8d6985206d3cb2d609c444daa090931e0e`。本轮云端 apksigner 完整校验及指纹比较已通过；下载 APK 的 v2 公开证书元数据也匹配此指纹。
 - 版本 `0.2.0-trial`／code `1`，正式 application ID `com.classher.timetable`，试用构建变体仍为 `debug`。新包首次安装，后续同包升级使用同签名并递增版本；不是正式发布或商店包。
 - push／workflow_dispatch 在必需测试与 lint 通过后用 Secrets 解码到 runner 临时文件、签名、校验证书、生成含实际提交与签名指纹的 provenance 后上传。缺 Secrets 必须失败；PR 不读取签名 Secrets、不上传 APK，仍执行全部测试与 lint。私钥不上传，签名构建关闭配置缓存。
 
@@ -596,3 +596,21 @@ GitHub Actions 的第三方步骤固定到本轮 GitHub API 核对的提交 SHA�
 - **未检查**：本轮 Kotlin 编译、Room KAPT/schema 输出、50 个测试执行结果、lint、稳定签名 APK、APK 真实覆盖升级及小米 14 离线重启／字体缩放／深色体验。旧 0.1.1 的 CI PASS 不能归给此版本。
 - **提交与推送**：只提交本轮源码、构建与 HANDOFF；已有 `docs/assets/`、`prototype/preview.png`、`verify/fixtures/` 未跟踪内容保留，私人样本、签名与 APK 排除。新提交需再次获用户确认后推送到同一公开仓库 `work/android-probe`；没有执行本轮推送、没有新 run 或 APK。
 - **检查结论**：可以进入云端编译验证，尚不能交付已验证 APK。构建后交付核心试用：确认缺地点与未排课清单后保存；关闭／清理应用、断网重开并查看今日与周课表；重复获取相同数据，核对安排数不增生和未排课仍保留。完整 MVP 后续继续实现编辑、例外、变化合并及备份。
+
+### 本次授权推送（2026-10-05）
+
+- 用户明确回复“推送”，授权此前请求中的 4e4baaa 及未推送文档记录。执行固定 SHA 的 `git push origin 4e4baaa3f5d60a83e533ebe28b5a960e9b3e91f3:refs/heads/work/android-probe` 成功，远端 ref 已核对一致；没有推送其他引用、未跟踪素材、密钥、私人样本或 APK。
+- [Actions run 37315604790](https://github.com/zfy06011/class-her-rewrite/actions/runs/37315604790) 显示 push、4e4baaa、work/android-probe。公开 API 遇到出口限流后，通过 GitHub Actions 页面取得 run，再用 GitHub connector 读取 job `111781446694`；初次快照显示既有 parser／school request checks 成功，Unit tests and lint 运行中。
+- 本次构建尚未终止，不能因推送成功宣称 APK 或 50 个测试通过。没有重复触发构建；继续跟进同一 run。整体目标仍未完成。
+
+### 0.2.0 云端结果与交付
+
+- [Run 37315604790](https://github.com/zfy06011/class-her-rewrite/actions/runs/37315604790)、job `111781446694` 最终 success，push 来源准确 SHA `4e4baaa3f5d60a83e533ebe28b5a960e9b3e91f3`。实际检出、parser／JS、Kotlin 编译、Room／Hilt KAPT、50 个测试、lint、稳定签名 assembleDebug、apksigner 校验及 artifact 上传均执行成功；没有跳过必需检查。run 总时长 2m32s。
+- 测试 HTML 报告：50 tests、0 failures、0 ignored、100% successful，执行时长 6.063s。原规则 36 项 + 新导入规则 5 项 + Room／公共锁 9 项均通过。磁盘关闭重开、幂等、事务回滚和取消解锁已有 Robolectric 证据，不能据此替代手机操作或自动更新实测。
+- Lint：0 errors／12 warnings／2 hints。12 警告包含原有 10 项工具／SDK／依赖版本建议、图标 v26 限定冗余，以及新增的 KAPT 可迁移 KSP 建议；不为零警告更换已确认处理器。另有 Kotlin 编译提示 `TimetableScreens.kt:89` 的 `selected != null` 为恒真条件，属于冗余条件，下一次相关 UI 改动修复；KAPT 单测无注解处理选项告警保留。2 个 hints 建议使用 mutableIntStateOf。未关闭 lint、增加 baseline 或改变检查门槛。
+- APK：`0.2.0-trial`／versionCode `1`，`com.classher.timetable`，`debug`，12,222,952 bytes。APK SHA-256：`27c54b21979727c77ad8687014d0f31131f815810180ecbc7ce3b4898e8a227c`。固定试用证书为前述 `0772965c...`；云端 apksigner 完整校验成功，本地读取实际 APK v2 DER 证书 SHA-256 一致（本地元数据提取不是再做完整密码学校验）。首次正式包，后续覆盖升级尚未真机验证。
+- [APK artifact 11347038555](https://github.com/zfy06011/class-her-rewrite/actions/runs/37315604790/artifacts/11347038555)，[诊断与 schema artifact 11347383064](https://github.com/zfy06011/class-her-rewrite/actions/runs/37315604790/artifacts/11347383064)，预计北京时间 2026-10-19 21:19 到期。下载两个 ZIP 的 SHA-256 与服务端 digest 一致：APK ZIP `61214c625da6d865dac27928b86b497481ca6453b6655470abc2563ec6c6a49c`，诊断 ZIP `91f0c4df3a19be32f3a31dfa8e733dd3144a8e4964e0e2ce44f4f4bff2bf2b89`。provenance 的实际提交、版本、包名、变体、APK 哈希及证书指纹全部匹配。
+- 本地 APK：`.verify-tmp/ci-37315604790/ClassHer-0.2.0-trial-4e4baaa-debug.apk`，同目录保留 ZIP、报告及 provenance；不提交二进制或临时下载 URL。
+- Room 编译器生成的 v1 schema 已复制到 `app/schemas/com.classher.timetable.data.local.ScheduleDatabase/1.json`，9 张表，identityHash `52ed920333d6db5621f732f5aef084d1`。文件来自上述实际构建，未手写哈希；后续数据库变化需显式 migration，不允许 destructive fallback。
+- 核心试用：① 安装新的“双轨”正式包，本人登录学校，核对学期／作息并逐项确认缺地点与未排课清单后保存；② 关闭或从最近任务清理应用，断网重开，查看今日、周课表和我的未排课清单；③ 再获取相同课表，安排数不增生，已有课程保持。新包与旧接入验证包独立，首次需重新登录；无需卸载用户原有正式应用。
+- 检查结论：可交付本次候选 APK；真机重启、字体缩放／深色、学校自然失效及真实 6 小时检查仍未验证。课程编辑、手工新增、单次调停、隐藏恢复、人工变更配对／合并、备份恢复仍是完整 MVP 的未完成项。当前本地结果记录与导出 schema 可提交，尚未另行推送；新文档 HEAD 不替代 APK 的 4e4baaa 来源。
