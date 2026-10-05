@@ -1,12 +1,12 @@
 # 双轨重写：当前任务交接
 
-更新：2026-10-05（0.2.0 已交付；继续已确认的手工新增／整条安排编辑与颜色，0.2.1 本地准备，见第 18 节）。
+更新：2026-10-05（0.2.0 已交付；继续已确认的手工新增／整条安排编辑与颜色，0.2.1 云端检查、迁移校验与固定签名 APK 通过，真机待试用，见第 18 节）。
 
-- 当前任务：首版个人课表 MVP；本轮小功能为免登录建立手工学期、手工新增、整条安排编辑及课程颜色，保护学校基线和原 UUID。整体目标仍未完成。
+- 当前任务：首版个人课表 MVP；0.2.1 的手工新增、整条编辑及颜色已完成云端验证，等待手机升级试用，随后继续单次例外、删除隐藏、学校变化配对／合并与备份。整体目标仍未完成。
 - 确认状态：沿用需求、原生技术栈与 AD-1～AD-12；用户已确认第 16.3 节处理决定并授权专用试用签名。用户另已确认无 ID 关联只自动匹配完全一致记录、其余手动配对。用户还确认：同学期配置完全一致、明确确认导入后可接入学校并保留所有手工课程与 UUID。继续原技术栈与 AD-1～AD-12，不提前实施跨存储恢复方案。每次推送仍需确认。
 - 当前执行者：Codex；已实测仓库读写、pwsh／Python／Node／Git，之前可读取 Actions 与下载产物。稳定签名在本机生成，Actions Secrets 通过 GitHub 页面保存并核对名称；没有安装或运行本地 JDK／Gradle／Android SDK。
-- 目标分支／构建来源：`work/android-probe`，本次授权推送的准确 SHA 为 `4e4baaa3f5d60a83e533ebe28b5a960e9b3e91f3`，远端 ref 已核对一致。公开仓库 [zfy06011/class-her-rewrite](https://github.com/zfy06011/class-her-rewrite)。本地后续文档记录不代替此构建 SHA。
-- 进展：4e4baaa 的 0.2.0 APK 已交付，50 个测试通过，真机仍待试用；随后本地结果／schema 记录提交为 `e0a1141b85f6ef857d2ef544c531dc9e79924338`，未另推。0.2.1 的手工新增／整条编辑／颜色与显式迁移源码已在本地实现，34 文件语法及实际 v1 schema 上的迁移 SQL 检查通过；68 个 Kotlin 测试、编译、lint、schema v2 和新 APK 均待重新云端验证。
+- 目标分支／本次 APK 来源：`work/android-probe`，本次授权推送准确 SHA 为 `d4ed6cca92a71960c1e764f0b3cf316680e6bfc7`，远端 ref 已核对一致。公开仓库 [zfy06011/class-her-rewrite](https://github.com/zfy06011/class-her-rewrite)。本地后续结果记录不代替此构建 SHA；旧 0.2.0 来源仍为 4e4baaa。
+- 进展：0.2.1 来源 d4ed6cc 的 run `37325140409`／job `111813850061` success，68 tests／0 failures／0 ignored；lint 0 errors／12 warnings／0 hints，固定签名校验与产物来源核对通过。编译器导出 schema v2 已取回，迁移数据保留及事务保护已有 Robolectric 证据；真机覆盖升级、界面和后续功能仍未完成。
 - 文档约定：本文件是唯一当前交接文档。第 8～15 节保留历史证据，当前状态以顶部与第 16～17 节为准。私人课表、会话、密钥及 APK 均不提交。
 
 ## 1. 已确认的首版需求
@@ -630,7 +630,7 @@ GitHub Actions 的第三方步骤固定到本轮 GitHub API 核对的提交 SHA�
 - 学校课程保留原学校基线，字段覆盖与可重建投影同事务保存；空字符串与未覆盖区分，回到基线值清除对应覆盖。星期／周集合／时间模式及其完整配置作为整体覆盖。手工新增使用随机 UUID，独立业务内容与投影同事务保存，不创建学校基线；相同学校快照检查保持手工安排与本地修改。编辑校验身份所属学期及权威 revision，过期编辑拒绝覆盖新内容。
 - 公共写入入口改为拒绝并发，不排队等待学校获取完成后再写旧编辑；编辑、导入及学校检查共用互斥入口，失败／取消必定解锁，读取已提交课程不等待网络。编辑中自动检查延后，完成后重新判断。原并发导入测试保留幂等性断言，并根据 AD-4 将并发忙响应列为合法拒绝结果，不删除或跳过该测试。
 - 当前尚无单次调停入口；仓库发现既有例外且排课组变化时拒绝静默改关联，保留原例外，留给下一功能处理。迁移必须保留已有例外，即使这轮不创建它们。
-- 数据库升为 schema 2：身份新增 colorSlot；基线／投影新增 timeMode 与 nullable 自定义起止时间。注册显式 `MIGRATION_1_2`，包含 7 条 ALTER TABLE、创建独立手工内容表及迁移已有手工内容，共 9 条 SQL，不清库、不改旧 UUID、引用或来源。v1 JSON 保持实际已交付版本的原内容；v2 JSON 需由下一次云端编译生成并取回。参照 [Android 官方迁移文档](https://developer.android.com/training/data-storage/room/migrating-db-versions)，继续 Room 2.8.5／KAPT，未迁移到 Room 3 或 KSP。
+- 数据库升为 schema 2：身份新增 colorSlot；基线／投影新增 timeMode 与 nullable 自定义起止时间。注册显式 `MIGRATION_1_2`，包含 7 条 ALTER TABLE、创建独立手工内容表及迁移已有手工内容，共 9 条 SQL，不清库、不改旧 UUID、引用或来源。v1 JSON 保持实际已交付版本的原内容；v2 JSON 已从本次真实构建取回，随本地结果记录保存。参照 [Android 官方迁移文档](https://developer.android.com/training/data-storage/room/migrating-db-versions)，继续 Room 2.8.5／KAPT，未迁移到 Room 3 或 KSP。
 - 修复上轮 Kotlin 恒真条件与两个整数状态装箱提示；周课表边界包含节次作息之外的自定义时间，极短课程保持可点击最小高度并分列避免相互遮挡。没有重做无变化的 parser／JS 检查或关闭 lint。
 
 ### 检查与提交状态
@@ -641,3 +641,20 @@ GitHub Actions 的第三方步骤固定到本轮 GitHub API 核对的提交 SHA�
 - **交付标准**：云端编译／68 项测试／lint／固定签名 APK 通过；手机验证 0.2.0 覆盖升级保留课程、离线手工新增与编辑、非连续节次／自定义时间、重开后颜色和修改保持。只需选 2～3 个核心试用步骤，不要求完整矩阵。
 - **提交边界**：仅本轮代码、测试、构建版本与本 HANDOFF，连同先前未推送的 e0a1141 结果／实际 schema v1。私人样本、签名、APK、原型截图与既有未跟踪素材不加入；重新推送仍需本次独立确认。
 - **检查结论**：可进入下一次云端验证，尚不能交付已验证的 0.2.1 APK。完整目标仍未完成；真机结果、单次例外、删除隐藏恢复、手动变更配对与合并、可靠前台自动检查及备份恢复仍需继续。
+
+### 0.2.1 本次授权推送
+
+- 用户明确选择“批准本次推送并构建”，授权 d4ed6cc 和先前未推的 e0a1141。固定 SHA `d4ed6cca92a71960c1e764f0b3cf316680e6bfc7` 已推送到公开仓库 `zfy06011/class-her-rewrite` 的 `work/android-probe`，远端 ref 核对一致；未推其他引用或私人文件。
+- [Actions run 37325140409](https://github.com/zfy06011/class-her-rewrite/actions/runs/37325140409)、job `111813850061`，push 触发，GitHub 页面显示实际来源 d4ed6cc。首个 job 快照显示既有 parser／school request checks 成功，Unit tests and lint 运行中；此时尚不能声称本轮 68 项或 APK 通过。
+
+### 0.2.1 云端结果与 APK 交付
+
+- [Run 37325140409](https://github.com/zfy06011/class-her-rewrite/actions/runs/37325140409)、job `111813850061` 最终 success，实际来源 `d4ed6cca92a71960c1e764f0b3cf316680e6bfc7`，总时长 3m4s。Kotlin／Room／Hilt 编译、68 个测试、lint、固定签名 assembleDebug、apksigner 及产物上传均成功。一次 connector 传输错误后，通过同一 run 页面确认仍运行，再读取同一 job 获得最终状态；未重启／重复触发构建。
+- 实际 HTML 报告：68 tests、0 failures、0 ignored、100% successful，执行时长 11.831s。其中 Room 仓库 21 项、迁移 3 项、编辑规则 3 项，其余既有规则 41 项均通过。包括实际 v1 schema 建库到 v2 的 Room 结构校验、原 UUID／基线／覆盖／例外／清单保留、旧手工业务内容补齐，以及缺迁移拒绝清库与事务失败回滚；这些仍不能代替真机升级或学校完整服务验证。
+- Lint 为 0 errors／12 warnings／0 hints。12 项仍是原有 SDK／工具／依赖版本建议、图标 v26 冗余和 KAPT→KSP 建议；两个整数状态提示已消失。上轮 Kotlin 恒真条件提示也未再出现。KAPT 单测未识别处理选项告警仍保留；没有关闭 lint、降检查门槛或更换技术栈。
+- APK：`0.2.1-trial`／versionCode `2`，`com.classher.timetable`，`debug`，12,337,640 bytes。实际构建提交为 d4ed6cc；APK SHA-256 `0855234ad632946baecfe61e56245ce00122b38250d8f88b1cd73eac3731f364`。云端完整签名校验通过，下载 APK v2 公开证书元数据指纹为 `0772965c1f74eb3ed73e486429e81f8d6985206d3cb2d609c444daa090931e0e`，与 0.2.0 相同。包名不变且版本号递增，可作为覆盖 0.2.0 的候选；未声称手机已升级成功。
+- [APK artifact 11351298922](https://github.com/zfy06011/class-her-rewrite/actions/runs/37325140409/artifacts/11351298922)，[诊断／schema artifact 11351229044](https://github.com/zfy06011/class-her-rewrite/actions/runs/37325140409/artifacts/11351229044)，预计北京时间 2026-10-19 22:32 到期。APK ZIP digest `8cca95f7667290299786d8a1207bdfa1e68ee7ffa586e51385852a16e7da6f23`、诊断 ZIP digest `5e9c36e446ea9ba75a75c18cf233c020267b01474bba1e589cfcc9d493d5fa77` 均与下载 ZIP SHA-256 一致；provenance 的来源、版本、包名、变体、APK 哈希与签名指纹全部核对一致。
+- 本地 APK：`.verify-tmp/ci-37325140409/ClassHer-0.2.1-trial-d4ed6cc-debug.apk`；同目录保存 ZIP、报告及 provenance，不提交产物、私人数据或临时下载 URL。
+- 实际 compiler-exported schema v2 已复制到 `app/schemas/com.classher.timetable.data.local.ScheduleDatabase/2.json`，10 张表，identityHash `68d5a95280efbc1998d259938b4a515e`。原 v1 文件保持不变；本轮导出文件与结果记录保存本地提交，未另行推送。
+- 核心试用：① 如已装 0.2.0，直接覆盖安装，检查原课程和未排课清单仍在；② 断网后新增手工课程，再编辑名称、节次／自定义时段与颜色；③ 关闭／清理应用后重开，确认修改和颜色保留。未使用过正式包时可从“离线手工录课”建立学期开始，不要求学校登录。
+- 检查结论：本次候选 APK 可交付。真机覆盖升级／持久化、字体缩放／深色、首次手工学期之后真实学校接入和服务失效场景仍待用户试用；单次调停、删除／隐藏恢复、变化配对／合并、学期配置调整及备份恢复仍未完成。构建成功不等于整体 MVP 验收完成。
