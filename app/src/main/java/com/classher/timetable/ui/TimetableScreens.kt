@@ -42,6 +42,10 @@ fun TimetableApp(state: TimetableState, model: TimetableViewModel, openSchool: (
     var importing by rememberSaveable { mutableStateOf(false) }
     var detailId by remember { mutableStateOf<UUID?>(null) }
     var detailOriginalDate by remember { mutableStateOf<LocalDate?>(null) }
+    state.reviewSession?.let { saved ->
+        SchoolReviewScreen(saved, state.saving, state.editMessage, model::endEditing, model::confirmSchoolReview)
+        return
+    }
     LaunchedEffect(state.importedId) {
         if (state.importedId != null) { importing = false; page = 0; model.consumeImported() }
     }
@@ -304,6 +308,15 @@ private fun SettingsScreen(state: TimetableState, model: TimetableViewModel, onI
             items(unscheduled) { name -> Card(Modifier.fillMaxWidth()) { Text(name, Modifier.padding(16.dp)) } }
         }
         val saved = state.selected
+        if (saved?.schoolReview != null) item {
+            Card(Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(16.dp)) {
+                    Text("学校更新待核对", style = MaterialTheme.typography.titleMedium)
+                    Text("完整变化已保存在本机，确认前继续使用原课表。")
+                    Button(onClick = model::openSchoolReview, enabled = !state.busy) { Text("核对学校更新") }
+                }
+            }
+        }
         val adjustments = saved?.let { it.exceptions + it.orphanedExceptions }.orEmpty().sortedBy { it.originalDate }
         if (saved != null && adjustments.isNotEmpty()) {
             item { Text("单次调整 · ${adjustments.size}", style = MaterialTheme.typography.titleMedium) }
@@ -320,7 +333,7 @@ private fun SettingsScreen(state: TimetableState, model: TimetableViewModel, onI
             }
         }
         if (saved != null && saved.hiddenSchoolCourses.isNotEmpty()) {
-            item { Text("已隐藏学校安排 · ${saved.hiddenSchoolCourses.size}", style = MaterialTheme.typography.titleMedium) }
+            item { Text("已隐藏安排 · ${saved.hiddenSchoolCourses.size}", style = MaterialTheme.typography.titleMedium) }
             items(saved.hiddenSchoolCourses, key = { it.arrangement.id.toString() }) { hidden ->
                 Card(onClick = { model.openRestoration(hidden.arrangement.id) }, enabled = !state.busy, modifier = Modifier.fillMaxWidth()) {
                     Column(Modifier.padding(16.dp)) {

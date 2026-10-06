@@ -61,6 +61,8 @@ data class SavedSchedule(
     val exceptions: List<SingleException> = emptyList(),
     val orphanedExceptions: List<SingleException> = emptyList(),
     val hiddenSchoolCourses: List<HiddenSchoolCourse> = emptyList(),
+    val schoolReview: SchoolReview? = null,
+    val schoolBaselines: Map<UUID, Arrangement> = emptyMap(),
 )
 
 data class HiddenSchoolCourse(val arrangement: Arrangement, val schoolBaseline: Arrangement, val color: CourseColor, val exceptions: List<SingleException>)
@@ -71,6 +73,7 @@ sealed interface ImportOutcome {
     data object DifferentAccount : ImportOutcome
     data object DifferentTermConfiguration : ImportOutcome
     data object LocalTermConfirmationRequired : ImportOutcome
+    data object StaleSnapshot : ImportOutcome
 }
 
 interface ScheduleRepository {
@@ -83,6 +86,7 @@ interface ScheduleRepository {
     suspend fun clearSingleException(termId: UUID, expectedRevision: Long, arrangementId: UUID, originalDate: java.time.LocalDate): EditOutcome
     suspend fun removeArrangement(termId: UUID, expectedRevision: Long, arrangementId: UUID): EditOutcome
     suspend fun restoreArrangement(termId: UUID, expectedRevision: Long, arrangementId: UUID): EditOutcome
+    suspend fun confirmSchoolReview(plan: SchoolReviewPlan): ReviewOutcome
 }
 
 data class CheckedSource(val snapshot: SchoolSnapshot, val fetchedAt: Instant, val outcome: ImportOutcome?)

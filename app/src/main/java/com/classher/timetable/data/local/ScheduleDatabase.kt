@@ -81,6 +81,11 @@ data class UnscheduledEntity(@PrimaryKey val id: String, val termId: String, val
 )])
 data class AcknowledgementEntity(val arrangementId: String, val kind: String)
 
+@Entity(tableName = "school_reviews", indices = [Index(value = ["termId"], unique = true)], foreignKeys = [ForeignKey(
+    entity = TermEntity::class, parentColumns = ["id"], childColumns = ["termId"], onDelete = ForeignKey.CASCADE,
+)])
+data class SchoolReviewEntity(@PrimaryKey val id: String, val termId: String, val fetchedAt: Long, val payload: String)
+
 data class TermBundle(
     @Embedded val term: TermEntity,
     @Relation(parentColumn = "id", entityColumn = "termId") val periods: List<PeriodEntity>,
@@ -93,15 +98,19 @@ data class TermBundle(
     @Relation(parentColumn = "id", entityColumn = "id", associateBy = Junction(
         value = IdentityEntity::class, parentColumn = "termId", entityColumn = "id",
     )) val baselines: List<BaselineEntity>,
+    @Relation(parentColumn = "id", entityColumn = "termId") val reviews: List<SchoolReviewEntity>,
 )
 
 @Dao
 interface ScheduleDao {
     @Transaction @Query("SELECT * FROM terms ORDER BY firstMonday DESC")
     fun observe(): Flow<List<TermBundle>>
+    @Transaction @Query("SELECT * FROM terms WHERE id = :termId") suspend fun bundle(termId: String): TermBundle?
     @Query("SELECT * FROM terms") suspend fun terms(): List<TermEntity>
-    @Query("SELECT b.* FROM school_baselines b INNER JOIN identities i ON i.id = b.id WHERE i.termId = :termId")
+    @Query("SELECT b.* FROM school_baselines b INNER JOIN identities i ON i.id = b.id WHERE i.termId = :termId AND i.origin = 'school'")
     suspend fun baselines(termId: String): List<BaselineEntity>
+    @Query("SELECT b.* FROM school_baselines b INNER JOIN identities i ON i.id = b.id WHERE i.termId = :termId")
+    suspend fun baselineHistory(termId: String): List<BaselineEntity>
     @Query("SELECT * FROM unscheduled WHERE termId = :termId") suspend fun unscheduled(termId: String): List<UnscheduledEntity>
     @Query("SELECT * FROM periods WHERE termId = :termId ORDER BY number") suspend fun periods(termId: String): List<PeriodEntity>
     @Query("UPDATE terms SET checkedAt = :checkedAt WHERE id = :id") suspend fun checked(id: String, checkedAt: Long)
@@ -115,6 +124,12 @@ interface ScheduleDao {
     @Query("SELECT * FROM local_overrides WHERE id = :id") suspend fun overrides(id: String): OverrideEntity?
     @Query("UPDATE identities SET colorSlot = :color WHERE id = :id") suspend fun color(id: String, color: Int)
     @Upsert suspend fun putProjection(projection: ProjectionEntity)
+    @Upsert suspend fun putBaseline(value: BaselineEntity)
+    @Query("UPDATE identities SET origin = :origin WHERE id = :id") suspend fun origin(id: String, origin: String)
+    @Query("DELETE FROM local_overrides WHERE id = :id") suspend fun clearOverride(id: String)
+    @Query("DELETE FROM manual_arrangements WHERE id = :id") suspend fun clearManual(id: String)
+    @Query("DELETE FROM source_acknowledgements WHERE arrangementId = :id") suspend fun clearAcknowledgements(id: String)
+    @Query("DELETE FROM unscheduled WHERE termId = :termId") suspend fun clearUnscheduled(termId: String)
     @Upsert suspend fun putOverride(value: OverrideEntity)
     @Upsert suspend fun putManual(value: ManualEntity)
     @Query("SELECT * FROM manual_arrangements WHERE id = :id") suspend fun manual(id: String): ManualEntity?
@@ -124,6 +139,10 @@ interface ScheduleDao {
     suspend fun termExceptions(termId: String): List<ExceptionEntity>
     @Query("UPDATE identities SET hidden = :hidden WHERE id = :id") suspend fun hide(id: String, hidden: Boolean)
     @Query("DELETE FROM identities WHERE id = :id") suspend fun deleteIdentity(id: String)
+    @Query("SELECT * FROM school_reviews WHERE termId = :termId") suspend fun review(termId: String): SchoolReviewEntity?
+    @Query("DELETE FROM school_reviews WHERE termId = :termId") suspend fun clearReview(termId: String)
+    @Insert suspend fun insertReview(value: SchoolReviewEntity)
+    @Query("UPDATE school_reviews SET fetchedAt = :time WHERE id = :id") suspend fun reviewChecked(id: String, time: Long)
     @Insert suspend fun insertTerm(term: TermEntity)
     @Insert suspend fun insertPeriods(periods: List<PeriodEntity>)
     @Insert suspend fun insertIdentities(identities: List<IdentityEntity>)
@@ -135,7 +154,7 @@ interface ScheduleDao {
 
 @Database(entities = [TermEntity::class, PeriodEntity::class, IdentityEntity::class, BaselineEntity::class,
     OverrideEntity::class, ExceptionEntity::class, ProjectionEntity::class, UnscheduledEntity::class,
-    AcknowledgementEntity::class, ManualEntity::class], version = 2, exportSchema = true)
+    AcknowledgementEntity::class, ManualEntity::class, SchoolReviewEntity::class], version = 3, exportSchema = true)
 abstract class ScheduleDatabase : RoomDatabase() {
     abstract fun schedules(): ScheduleDao
 }

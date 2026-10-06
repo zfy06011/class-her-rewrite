@@ -17,14 +17,14 @@ data class CourseManagementSession(val schedule: SavedSchedule, val course: Arra
 @Composable
 fun CourseManagementDialog(session: CourseManagementSession, busy: Boolean, message: String, onCancel: () -> Unit, onConfirm: () -> Unit) {
     val school = session.schedule.origins[session.course.id] == CourseOrigin.SCHOOL
-    val title = if (session.restore) "恢复学校课程？" else if (school) "隐藏学校课程？" else "删除手工课程？"
+    val title = if (session.restore) "恢复隐藏课程？" else if (school) "隐藏学校课程？" else "删除手工课程？"
     AlertDialog(onDismissRequest = { if (!busy) onCancel() }, title = { Text(title) }, text = {
         Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = LayoutArrangement.spacedBy(12.dp)) {
             Text(session.course.name, style = MaterialTheme.typography.titleMedium)
             if (session.restore) {
                 val hidden = requireNotNull(session.hidden)
-                session.schedule.lastSuccessfulCheck?.let { Text("最近确认学校数据：${it.atZone(SchoolZone).format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm"))}", style = MaterialTheme.typography.bodySmall) }
-                Text("学校基线", style = MaterialTheme.typography.titleSmall)
+                if (school) session.schedule.lastSuccessfulCheck?.let { Text("最近成功学校检查：${it.atZone(SchoolZone).format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm"))}", style = MaterialTheme.typography.bodySmall) }
+                Text(if (school) "学校基线" else "历史学校记录（已转手工）", style = MaterialTheme.typography.titleSmall)
                 CoursePreview(hidden.schoolBaseline, session.schedule)
                 Card(colors = CardDefaults.cardColors(containerColor = LocalCourseColors.current[hidden.color.ordinal], contentColor = MaterialTheme.colorScheme.onSurface)) {
                     Column(Modifier.padding(12.dp), verticalArrangement = LayoutArrangement.spacedBy(4.dp)) {
@@ -43,7 +43,7 @@ fun CourseManagementDialog(session: CourseManagementSession, busy: Boolean, mess
 }
 
 @Composable
-private fun CoursePreview(course: Arrangement, saved: SavedSchedule) {
+internal fun CoursePreview(course: Arrangement, saved: SavedSchedule) {
     Text(course.name, style = MaterialTheme.typography.bodyMedium)
     Text("${course.teacher.ifBlank { "教师未填写" }} · ${course.room.ifBlank { "地点未填写" }}")
     Text("星期${listOf("一", "二", "三", "四", "五", "六", "日")[course.weekday - 1]} · ${course.time.ranges(saved.periods).joinToString(" / ") { "${it.start}–${it.end}" }}")

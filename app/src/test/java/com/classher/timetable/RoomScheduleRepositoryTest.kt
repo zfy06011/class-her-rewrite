@@ -7,6 +7,7 @@ import androidx.test.core.app.ApplicationProvider
 import com.classher.timetable.data.local.RoomScheduleRepository
 import com.classher.timetable.data.local.ScheduleDatabase
 import com.classher.timetable.data.local.MIGRATION_1_2
+import com.classher.timetable.data.local.MIGRATION_2_3
 import com.classher.timetable.domain.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
@@ -47,7 +48,7 @@ class RoomScheduleRepositoryTest {
         reopen()
     }
     private fun reopen() {
-        database = Room.databaseBuilder(context, ScheduleDatabase::class.java, "import-test.db").addMigrations(MIGRATION_1_2).build()
+        database = Room.databaseBuilder(context, ScheduleDatabase::class.java, "import-test.db").addMigrations(MIGRATION_1_2, MIGRATION_2_3).build()
         repository = RoomScheduleRepository(database, gate)
     }
     @After fun close() { database.close(); context.deleteDatabase("import-test.db") }
@@ -82,7 +83,9 @@ class RoomScheduleRepositoryTest {
         assertEquals(ImportOutcome.ChangedSourceNeedsReview, repository.confirmImport(plan.copy(snapshot = changedSnapshot)))
         val otherAccount = plan.snapshot.copy(scope = plan.snapshot.scope.copy(accountDigest = accountDigest("another-synthetic-account")))
         assertEquals(ImportOutcome.DifferentAccount, repository.confirmImport(plan.copy(snapshot = otherAccount)))
-        assertEquals(before, repository.observeSchedules().first().single())
+        val pending = repository.observeSchedules().first().single()
+        assertNotNull(pending.schoolReview)
+        assertEquals(before, pending.copy(schoolReview = null))
     }
     @Test fun unconfirmedDoubtAndChangedConfigurationLeaveDatabaseIntact() = runBlocking {
         repository.confirmImport(plan)
@@ -521,5 +524,214 @@ class RoomScheduleRepositoryTest {
         catch (_: Exception) { /* expected */ }
         assertEquals(before, repository.observeSchedules().first().single())
         database.openHelper.writableDatabase.execSQL("DROP TRIGGER reject_restore")
+    }
+
+    private fun source(vararg meetings: ParsedMeeting, unscheduled: List<String> = plan.snapshot.unscheduledNames) = plan.snapshot.copy(
+        meetings = meetings.toList(), unscheduledNames = unscheduled,
+        doubts = meetings.filter { it.room.isBlank() }.map { ParseDoubt("缺地点", kind = DoubtKind.MISSING_ROOM, meeting = it) } +
+            if (unscheduled.isEmpty()) emptyList() else listOf(ParseDoubt("未排课", kind = DoubtKind.UNSCHEDULED)),
+    )
+    private suspend fun pending(snapshot: SchoolSnapshot): SavedSchedule {
+        val current = repository.observeSchedules().first().single()
+        val fetchedAt = maxOf(current.lastSuccessfulCheck ?: plan.fetchedAt, current.schoolReview?.fetchedAt ?: plan.fetchedAt).plusSeconds(60)
+        repository.confirmImport(plan.copy(snapshot = snapshot, acknowledgedDoubts = snapshot.doubts.indices.toSet(), fetchedAt = fetchedAt))
+        return repository.observeSchedules().first().single()
+    }
+    private fun reviewPlan(saved: SavedSchedule, links: Map<Int, java.util.UUID?>, removed: Map<java.util.UUID, RemovedSchoolChoice> = emptyMap(), choices: Map<ReviewFieldKey, ConflictChoice> = emptyMap()) =
+        SchoolReviewPlan(saved.id, saved.revision, saved.schoolReview!!.id, links, removed, choices, saved.schoolReview.snapshot.doubts.indices.toSet())
+
+    @Test fun changedCandidateSurvivesReopenAndRepeatedCheckKeepsCandidateId() = runBlocking {
+        repository.confirmImport(plan)
+        val before = repository.observeSchedules().first().single()
+        val snapshot = source(meeting.copy(teacher = "新学校教师"))
+        val first = pending(snapshot)
+        assertEquals(before.copy(lastSuccessfulCheck = plan.fetchedAt.plusSeconds(60)), first.copy(schoolReview = null))
+        database.close(); reopen()
+        assertEquals(first, repository.observeSchedules().first().single())
+        repository.confirmImport(plan.copy(snapshot = snapshot, acknowledgedDoubts = snapshot.doubts.indices.toSet(), fetchedAt = plan.fetchedAt.plusSeconds(120)))
+        val second = repository.observeSchedules().first().single()
+        assertEquals(first.schoolReview!!.id, second.schoolReview!!.id)
+        assertEquals(plan.fetchedAt.plusSeconds(120), second.schoolReview.fetchedAt)
+        assertEquals(1, database.openHelper.readableDatabase.query("SELECT * FROM school_reviews").use { it.count })
+    }
+    @Test fun replacedCandidateRejectsOldConfirmationAndOlderDraftCannotEraseNewCandidate() = runBlocking {
+        repository.confirmImport(plan)
+        val first = pending(source(meeting.copy(teacher = "候选一")))
+        val selected = reviewPlan(first, mapOf(0 to first.arrangements.single().id))
+        val second = pending(source(meeting.copy(teacher = "候选二")))
+        assertNotEquals(first.schoolReview!!.id, second.schoolReview!!.id)
+        assertEquals(ReviewOutcome.Stale, repository.confirmSchoolReview(selected))
+        repository.confirmImport(plan) // old unchanged draft must not erase the newer candidate
+        assertEquals(second, repository.observeSchedules().first().single())
+        repository.confirmImport(plan.copy(fetchedAt = plan.fetchedAt.plusSeconds(180)))
+        assertNull(repository.observeSchedules().first().single().schoolReview)
+    }
+    @Test fun pairedIndependentChangesKeepUuidColorManualAndExceptionAcrossReopen() = runBlocking {
+        repository.confirmImport(plan)
+        var saved = repository.observeSchedules().first().single(); val id = saved.arrangements.single().id
+        repository.saveArrangement(saved.id, saved.revision, ArrangementEdit(id, meeting.name, meeting.teacher, "本地地点", SchedulingGroup(1, meeting.weeks, MeetingTime.Periods(meeting.periods)), CourseColor.MINT))
+        saved = repository.observeSchedules().first().single()
+        val exception = SingleException.Cancel(id, plan.term.dateOf(1, 1))
+        repository.saveSingleException(saved.id, saved.revision, exception)
+        saved = repository.observeSchedules().first().single()
+        repository.saveArrangement(saved.id, saved.revision, ArrangementEdit(null, "手工保留", "", "", SchedulingGroup(2, setOf(1), MeetingTime.Periods(setOf(3)))))
+        saved = pending(source(meeting.copy(teacher = "学校新教师"), unscheduled = listOf("新未排课示例")))
+        assertTrue(previewSchoolReview(saved, mapOf(0 to id), emptyMap()).conflicts.isEmpty())
+        assertTrue(repository.confirmSchoolReview(reviewPlan(saved, mapOf(0 to id))) is ReviewOutcome.Saved)
+        val after = repository.observeSchedules().first().single()
+        val course = after.arrangements.single { it.id == id }
+        assertEquals("学校新教师", course.teacher); assertEquals("本地地点", course.room)
+        assertEquals(CourseColor.MINT, after.colors[id]); assertEquals(listOf(exception), after.exceptions)
+        assertEquals(2, after.arrangements.size); assertEquals(listOf("新未排课示例"), after.unscheduled)
+        assertEquals("学校新教师", after.schoolBaselines.getValue(id).teacher)
+        assertEquals("本地地点", database.schedules().overrides(id.toString())!!.room)
+        assertNull(after.schoolReview)
+        database.close(); reopen(); assertEquals(after, repository.observeSchedules().first().single())
+    }
+    @Test fun fieldConflictNeedsChoiceAndRevisionCheckProtectsLaterLocalEdit() = runBlocking {
+        repository.confirmImport(plan)
+        var saved = repository.observeSchedules().first().single(); val id = saved.arrangements.single().id
+        repository.saveArrangement(saved.id, saved.revision, ArrangementEdit(id, meeting.name, "本地教师", "", SchedulingGroup(1, meeting.weeks, MeetingTime.Periods(meeting.periods))))
+        saved = pending(source(meeting.copy(teacher = "学校新教师")))
+        val request = reviewPlan(saved, mapOf(0 to id))
+        assertEquals(listOf(ReviewField.TEACHER), previewSchoolReview(saved, request.links, emptyMap()).conflicts.map { it.key.field })
+        assertEquals(ReviewOutcome.Invalid, repository.confirmSchoolReview(request))
+        assertEquals(saved, repository.observeSchedules().first().single())
+        repository.saveArrangement(saved.id, saved.revision, ArrangementEdit(id, meeting.name, "再次修改", "", SchedulingGroup(1, meeting.weeks, MeetingTime.Periods(meeting.periods))))
+        assertEquals(ReviewOutcome.Stale, repository.confirmSchoolReview(request.copy(choices = mapOf(ReviewFieldKey(0, ReviewField.TEACHER) to ConflictChoice.KEEP_LOCAL))))
+        saved = repository.observeSchedules().first().single()
+        assertTrue(repository.confirmSchoolReview(reviewPlan(saved, mapOf(0 to id), choices = mapOf(ReviewFieldKey(0, ReviewField.TEACHER) to ConflictChoice.KEEP_LOCAL))) is ReviewOutcome.Saved)
+        val after = repository.observeSchedules().first().single()
+        assertEquals("再次修改", after.arrangements.single().teacher)
+        assertEquals("学校新教师", after.schoolBaselines.getValue(id).teacher)
+    }
+    @Test fun schedulingConflictSelectsWholeGroupAndRetainsOrphanedOriginalDate() = runBlocking {
+        repository.confirmImport(plan)
+        var saved = repository.observeSchedules().first().single(); val id = saved.arrangements.single().id
+        val custom = MeetingTime.Custom(TimeRange(java.time.LocalTime.parse("12:00"), java.time.LocalTime.parse("13:00")))
+        repository.saveArrangement(saved.id, saved.revision, ArrangementEdit(id, meeting.name, meeting.teacher, "", SchedulingGroup(2, setOf(1, 2), custom)))
+        saved = repository.observeSchedules().first().single()
+        val exception = SingleException.Cancel(id, plan.term.dateOf(1, 2))
+        repository.saveSingleException(saved.id, saved.revision, exception)
+        saved = pending(source(meeting.copy(weekday = 3, weeks = setOf(2, 3), periods = setOf(5))))
+        assertEquals(listOf(ReviewField.SCHEDULE), previewSchoolReview(saved, mapOf(0 to id), emptyMap()).conflicts.map { it.key.field })
+        val result = repository.confirmSchoolReview(reviewPlan(saved, mapOf(0 to id), choices = mapOf(ReviewFieldKey(0, ReviewField.SCHEDULE) to ConflictChoice.USE_SCHOOL))) as ReviewOutcome.Saved
+        val after = repository.observeSchedules().first().single()
+        assertEquals(1, result.orphanedExceptions)
+        assertEquals(SchedulingGroup(3, setOf(2, 3), MeetingTime.Periods(setOf(5))), after.arrangements.single().schedulingGroup())
+        assertEquals(listOf(exception), after.orphanedExceptions); assertTrue(after.exceptions.isEmpty())
+        assertEquals(1, database.schedules().exceptions(id.toString()).size)
+    }
+    @Test fun hiddenConversionRetainsHistoryAndExceptionsAndExplicitRelinkDoesNotUnhide() = runBlocking {
+        repository.confirmImport(plan)
+        var saved = repository.observeSchedules().first().single(); val id = saved.arrangements.single().id
+        val exception = SingleException.Cancel(id, plan.term.dateOf(1, 1))
+        repository.saveSingleException(saved.id, saved.revision, exception)
+        saved = repository.observeSchedules().first().single(); repository.removeArrangement(saved.id, saved.revision, id)
+        val replacement = meeting.copy(name = "新课程", room = "示例地点")
+        saved = pending(source(replacement))
+        assertTrue(repository.confirmSchoolReview(reviewPlan(saved, mapOf(0 to null), mapOf(id to RemovedSchoolChoice.KEEP_MANUAL))) is ReviewOutcome.Saved)
+        saved = repository.observeSchedules().first().single()
+        assertEquals(CourseOrigin.MANUAL, saved.origins[id]); assertTrue(saved.arrangements.none { it.id == id })
+        assertEquals(listOf(exception), saved.hiddenSchoolCourses.single().exceptions)
+        assertTrue(id in saved.schoolBaselines); assertEquals(1, database.schedules().baselines(saved.id.toString()).size)
+        assertTrue(repository.confirmImport(plan.copy(snapshot = source(replacement), acknowledgedDoubts = setOf(0), fetchedAt = plan.fetchedAt.plusSeconds(120))) is ImportOutcome.Saved)
+        saved = pending(source(replacement, meeting))
+        val replacementId = saved.arrangements.single().id
+        val newRequest = reviewPlan(saved, mapOf(0 to replacementId, 1 to null))
+        assertEquals(ReviewOutcome.Invalid, repository.confirmSchoolReview(newRequest)) // history needs explicit duplicate confirmation
+        assertTrue(repository.confirmSchoolReview(newRequest.copy(links = mapOf(0 to replacementId, 1 to id))) is ReviewOutcome.Saved)
+        saved = repository.observeSchedules().first().single()
+        assertEquals(CourseOrigin.SCHOOL, saved.origins[id]); assertTrue(saved.arrangements.none { it.id == id })
+        assertTrue(repository.restoreArrangement(saved.id, saved.revision, id) is EditOutcome.Saved)
+        saved = repository.observeSchedules().first().single()
+        assertEquals(2, saved.arrangements.size); assertEquals(listOf(exception), saved.exceptions)
+    }
+    @Test fun convertedHiddenManualCanBeRestoredWithoutRejoiningSchool() = runBlocking {
+        repository.confirmImport(plan)
+        var saved = repository.observeSchedules().first().single(); val id = saved.arrangements.single().id
+        repository.removeArrangement(saved.id, saved.revision, id)
+        saved = pending(source(meeting.copy(name = "新记录", room = "示例地点")))
+        repository.confirmSchoolReview(reviewPlan(saved, mapOf(0 to null), mapOf(id to RemovedSchoolChoice.KEEP_MANUAL)))
+        database.close(); reopen()
+        saved = repository.observeSchedules().first().single()
+        assertTrue(repository.restoreArrangement(saved.id, saved.revision, id) is EditOutcome.Saved)
+        saved = repository.observeSchedules().first().single()
+        assertEquals(CourseOrigin.MANUAL, saved.origins[id]); assertTrue(saved.arrangements.any { it.id == id })
+        assertNotNull(database.schedules().manual(id.toString()))
+    }
+    @Test fun schoolDeletionCascadesRelatedDataWithoutDeletingManualCourses() = runBlocking {
+        repository.confirmImport(plan)
+        var saved = repository.observeSchedules().first().single(); val id = saved.arrangements.single().id
+        repository.saveSingleException(saved.id, saved.revision, SingleException.Cancel(id, plan.term.dateOf(1, 1)))
+        saved = repository.observeSchedules().first().single()
+        repository.saveArrangement(saved.id, saved.revision, ArrangementEdit(null, "保留手工", "", "", SchedulingGroup(2, setOf(1), MeetingTime.Periods(setOf(3)))))
+        saved = pending(source(meeting.copy(name = "新增学校", room = "示例地点")))
+        assertTrue(repository.confirmSchoolReview(reviewPlan(saved, mapOf(0 to null), mapOf(id to RemovedSchoolChoice.DELETE))) is ReviewOutcome.Saved)
+        saved = repository.observeSchedules().first().single()
+        assertEquals(2, saved.arrangements.size); assertFalse(id in saved.origins)
+        assertNull(database.schedules().identity(id.toString())); assertTrue(database.schedules().exceptions(id.toString()).isEmpty())
+        assertFalse(id in saved.schoolBaselines)
+    }
+    @Test fun exactAssociationCannotBeReplacedByNewUuidAndMissingAcknowledgementCannotWrite() = runBlocking {
+        repository.confirmImport(plan)
+        val saved = pending(source(meeting, meeting.copy(name = "新增学校", room = "示例地点")))
+        val id = saved.arrangements.single().id
+        assertEquals(ReviewOutcome.Invalid, repository.confirmSchoolReview(reviewPlan(saved, mapOf(0 to null, 1 to null), mapOf(id to RemovedSchoolChoice.DELETE))))
+        val valid = reviewPlan(saved, mapOf(0 to id, 1 to null))
+        assertEquals(ReviewOutcome.Invalid, repository.confirmSchoolReview(valid.copy(acknowledgedDoubts = emptySet())))
+        assertEquals(saved, repository.observeSchedules().first().single())
+        assertTrue(repository.confirmSchoolReview(valid) is ReviewOutcome.Saved)
+        assertTrue(repository.observeSchedules().first().single().arrangements.any { it.id == id })
+    }
+    @Test fun injectedReviewCommitFailureRollsBackBaselineProjectionAndCandidateTogether() = runBlocking(Dispatchers.IO) {
+        repository.confirmImport(plan)
+        val saved = pending(source(meeting.copy(teacher = "新教师")))
+        val request = reviewPlan(saved, mapOf(0 to saved.arrangements.single().id))
+        database.openHelper.writableDatabase.execSQL("CREATE TRIGGER reject_review BEFORE UPDATE ON projections BEGIN SELECT RAISE(ABORT, 'synthetic review failure'); END")
+        try { repository.confirmSchoolReview(request); fail("Injected write failure ignored") } catch (_: Exception) { /* rollback */ }
+        assertEquals(saved, repository.observeSchedules().first().single())
+        database.openHelper.writableDatabase.execSQL("DROP TRIGGER reject_review")
+        assertTrue(repository.confirmSchoolReview(request) is ReviewOutcome.Saved)
+    }
+    @Test fun pendingReviewConfirmationRespectsGlobalWriteGate() = runBlocking {
+        repository.confirmImport(plan)
+        val saved = pending(source(meeting.copy(teacher = "新教师")))
+        val request = reviewPlan(saved, mapOf(0 to saved.arrangements.single().id))
+        val started = CompletableDeferred<Unit>(); val finish = CompletableDeferred<Unit>()
+        val checking = async { repository.checkSource(plan.snapshot.scope) { started.complete(Unit); finish.await(); plan.snapshot } }
+        started.await()
+        assertEquals(ReviewOutcome.Busy, repository.confirmSchoolReview(request))
+        assertEquals(saved, repository.observeSchedules().first().single())
+        finish.complete(Unit); checking.await()
+    }
+    @Test fun unknownOrFailedFetchKeepsPendingCandidateAndSuccessTime() = runBlocking {
+        repository.confirmImport(plan)
+        val saved = pending(source(meeting.copy(teacher = "新教师")))
+        val bad = saved.schoolReview!!.snapshot.copy(doubts = listOf(ParseDoubt("未知内容")))
+        assertNull(repository.checkSource(plan.snapshot.scope) { bad }.outcome)
+        try { repository.checkSource(plan.snapshot.scope) { throw SchoolException(SchoolFailure.NETWORK) }; fail("Failure ignored") }
+        catch (error: SchoolException) { assertEquals(SchoolFailure.NETWORK, error.failure) }
+        assertEquals(saved, repository.observeSchedules().first().single())
+    }
+    @Test fun pendingSchoolUpdateMustBeConfirmedBeforeHiddenRestoration() = runBlocking {
+        repository.confirmImport(plan)
+        var saved = repository.observeSchedules().first().single(); val id = saved.arrangements.single().id
+        repository.removeArrangement(saved.id, saved.revision, id)
+        saved = pending(source(meeting.copy(teacher = "最新教师")))
+        assertEquals(EditOutcome.ExceptionReviewRequired, repository.restoreArrangement(saved.id, saved.revision, id))
+        assertEquals(saved, repository.observeSchedules().first().single())
+        repository.confirmSchoolReview(reviewPlan(saved, mapOf(0 to id)))
+        saved = repository.observeSchedules().first().single()
+        assertEquals("最新教师", saved.hiddenSchoolCourses.single().schoolBaseline.teacher)
+        assertTrue(repository.restoreArrangement(saved.id, saved.revision, id) is EditOutcome.Saved)
+    }
+    @Test fun oldSnapshotAfterConfirmedUpdateCannotCreateReverseCandidate() = runBlocking {
+        repository.confirmImport(plan)
+        val saved = pending(source(meeting.copy(teacher = "新教师")))
+        repository.confirmSchoolReview(reviewPlan(saved, mapOf(0 to saved.arrangements.single().id)))
+        val after = repository.observeSchedules().first().single()
+        assertEquals(ImportOutcome.StaleSnapshot, repository.confirmImport(plan))
+        assertEquals(after, repository.observeSchedules().first().single())
     }
 }

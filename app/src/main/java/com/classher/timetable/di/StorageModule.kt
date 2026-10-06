@@ -16,7 +16,7 @@ import javax.inject.Singleton
 @Module @InstallIn(SingletonComponent::class)
 object StorageModule {
     @Provides @Singleton fun database(@ApplicationContext context: Context): ScheduleDatabase =
-        Room.databaseBuilder(context, ScheduleDatabase::class.java, "classher.db").addMigrations(MIGRATION_1_2).build()
+        Room.databaseBuilder(context, ScheduleDatabase::class.java, "classher.db").addMigrations(MIGRATION_1_2, MIGRATION_2_3).build()
     @Provides @Singleton fun gate() = ScheduleWriteGate()
     @Provides @Singleton fun schedules(database: ScheduleDatabase, gate: ScheduleWriteGate): ScheduleRepository =
         RoomScheduleRepository(database, gate)

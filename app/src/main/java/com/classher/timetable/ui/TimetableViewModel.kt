@@ -34,6 +34,7 @@ data class TimetableState(
     val creatingTerm: Boolean = false,
     val adjustment: AdjustmentSession? = null,
     val management: CourseManagementSession? = null,
+    val reviewSession: SavedSchedule? = null,
 ) {
     val selected: SavedSchedule? get() = schedules.firstOrNull { it.id == selectedId } ?: schedules.firstOrNull()
     val busy: Boolean get() = running || saving
@@ -133,7 +134,7 @@ class TimetableViewModel @Inject constructor(
                 if (checked.outcome == ImportOutcome.DifferentAccount) throw SchoolException(SchoolFailure.IDENTITY_MISMATCH)
                 val fetchedAt = checked.fetchedAt
                 var status = "完整获取：请核对学期、作息和每个缺失项后保存。"
-                // 已确认基线完全一致才更新成功时间；变化内容不会盲目覆盖本地课程。
+                // 完整有效变化落为待核对候选；成功获取计时与用户确认合并分开。
                 if (checked.outcome != null) {
                     val result = checked.outcome
                     if (result is ImportOutcome.Saved) {
@@ -141,7 +142,13 @@ class TimetableViewModel @Inject constructor(
                         mutable.update { it.copy(running = false, draft = null, repeatedIdentically = true, status = "检查完成，学校数据与已保存基线一致。") }
                         return@launch
                     }
-                    status = "学校数据有变化，原课表已保留。变更关联与合并将在后续功能中处理。"
+                    if (result == ImportOutcome.ChangedSourceNeedsReview) {
+                        policy.succeeded(fetchedAt)
+                        mutable.update { it.copy(running = false, draft = null, selectedId = it.schedules.firstOrNull { savedTerm -> savedTerm.scope == next.scope }?.id ?: it.selectedId,
+                            status = "学校变化已保存到本机，原课表保留。请在“我的”中核对更新。") }
+                        return@launch
+                    }
+                    status = "学校数据有变化，原课表已保留，请核对配置。"
                 }
                 policy.failed(fetchedAt, loginRequired = false)
                 mutable.update { it.copy(running = false, draft = ImportDraft(UUID.randomUUID(), next, fetchedAt),
@@ -166,10 +173,13 @@ class TimetableViewModel @Inject constructor(
                         mutable.update { it.copy(draft = null, selectedId = result.termId, importedId = result.termId,
                             status = "已保存，关闭应用后仍可离线查看。") }
                     }
-                    ImportOutcome.ChangedSourceNeedsReview -> mutable.update { it.copy(status = "同学期来源已变化，原课表保留。请等待变更核对功能。") }
+                    ImportOutcome.ChangedSourceNeedsReview -> mutable.update { it.copy(draft = null,
+                        selectedId = it.schedules.firstOrNull { savedTerm -> savedTerm.scope == draft.snapshot.scope }?.id ?: it.selectedId,
+                        status = "变化已保存，请在“我的”中核对学校更新。原课表保留。") }
                     ImportOutcome.DifferentAccount -> mutable.update { it.copy(status = "学校账号与已保存课表不同，已拒绝混入。") }
                     ImportOutcome.DifferentTermConfiguration -> mutable.update { it.copy(status = "学期起点或作息与已保存配置不同，原课表保留。") }
                     ImportOutcome.LocalTermConfirmationRequired -> mutable.update { it.copy(status = "此学期已有手工课程，请确认保留它们并接入学校课表。") }
+                    ImportOutcome.StaleSnapshot -> mutable.update { it.copy(status = "这份获取结果早于已确认的数据，请重新获取。原课表保留。") }
                 }
             } catch (_: ScheduleBusyException) { mutable.update { it.copy(status = "课表正在更新，稍后再确认导入。原课表保留。") } } catch (error: CancellationException) { throw error } catch (_: Exception) { mutable.update { it.copy(status = "未能保存，请检查日期、周数、作息和核对项。原课表未改变。") } } finally { mutable.update { it.copy(saving = false) } }
         }
@@ -202,7 +212,7 @@ class TimetableViewModel @Inject constructor(
         return true
     }
     fun endEditing() {
-        if (!mutable.value.saving) { mutable.update { it.copy(editing = false, editor = null, adjustment = null, management = null, creatingTerm = false, editMessage = "") }; maybeCheck() }
+        if (!mutable.value.saving) { mutable.update { it.copy(editing = false, editor = null, adjustment = null, management = null, reviewSession = null, creatingTerm = false, editMessage = "") }; maybeCheck() }
     }
     fun openEditor(id: UUID?) {
         val saved = mutable.value.selected ?: return
@@ -242,6 +252,31 @@ class TimetableViewModel @Inject constructor(
         }
     }
     fun consumeEdited() { mutable.update { it.copy(editedId = null, editing = false, editor = null, adjustment = null, management = null, creatingTerm = false) }; maybeCheck() }
+
+    fun openSchoolReview() {
+        val saved = mutable.value.selected?.takeIf { it.schoolReview != null } ?: return
+        if (beginEditing()) mutable.update { it.copy(reviewSession = saved) }
+    }
+    fun confirmSchoolReview(plan: SchoolReviewPlan) {
+        if (mutable.value.busy || !mutable.value.editing) return
+        mutable.update { it.copy(saving = true, editMessage = "正在确认更新…") }
+        viewModelScope.launch {
+            try {
+                when (val result = repository.confirmSchoolReview(plan)) {
+                    is ReviewOutcome.Saved -> {
+                        mutable.value.reviewSession?.schoolReview?.fetchedAt?.let(policy::succeeded)
+                        mutable.update { it.copy(reviewSession = null, editing = false, draft = null, editMessage = "",
+                            status = "学校更新已确认。" + if (result.orphanedExceptions > 0) "有 ${result.orphanedExceptions} 项单次调整关联待核对，可在我的中处理。" else "") }
+                    }
+                    ReviewOutcome.Busy -> mutable.update { it.copy(editMessage = "课表正在更新，请稍后重试。") }
+                    ReviewOutcome.Stale -> mutable.update { it.copy(editMessage = "课表或学校候选已变化，请返回重新核对。此次未写入。") }
+                    ReviewOutcome.Invalid -> mutable.update { it.copy(editMessage = "请完整确认配对、删除、缺失项及每个字段冲突。此次未写入。") }
+                }
+            } catch (error: CancellationException) { throw error } catch (_: Exception) {
+                mutable.update { it.copy(editMessage = "更新未完成，原课表及学校候选保留，请重试。") }
+            } finally { mutable.update { it.copy(saving = false) } }
+        }
+    }
     fun consumeCreatedTerm() { mutable.update { it.copy(createdTermId = null) } }
 
     fun openAdjustment(id: UUID, originalDate: LocalDate) {
@@ -276,6 +311,7 @@ class TimetableViewModel @Inject constructor(
     }
     fun openRestoration(id: UUID) {
         val saved = mutable.value.selected ?: return
+        if (saved.schoolReview != null) { mutable.update { it.copy(status = "学校有更新待核对，请先确认更新，再预览并恢复隐藏课程。") }; return }
         val hidden = saved.hiddenSchoolCourses.firstOrNull { it.arrangement.id == id } ?: return
         if (beginEditing()) mutable.update { it.copy(editor = null, adjustment = null, creatingTerm = false, management = CourseManagementSession(saved, hidden.arrangement, true, hidden)) }
     }
@@ -294,7 +330,8 @@ class TimetableViewModel @Inject constructor(
                     EditOutcome.Busy -> mutable.update { it.copy(editMessage = "课表正在更新，稍后重试。") }
                     EditOutcome.Stale -> mutable.update { it.copy(editMessage = "课表已变化，请取消并重新打开确认。此次未写入。") }
                     EditOutcome.Missing -> mutable.update { it.copy(editMessage = "课程状态已变化，请返回核对。") }
-                    EditOutcome.Invalid, EditOutcome.ExceptionReviewRequired -> mutable.update { it.copy(editMessage = "当前数据需要核对，原课程未改变。") }
+                    EditOutcome.ExceptionReviewRequired -> mutable.update { it.copy(editMessage = "学校更新待核对，请返回确认更新后再恢复。原课程保留。") }
+                    EditOutcome.Invalid -> mutable.update { it.copy(editMessage = "当前数据需要核对，原课程未改变。") }
                 }
             } catch (error: CancellationException) { throw error } catch (_: Exception) { mutable.update { it.copy(editMessage = "保存失败，原课程和关联数据保留。") } } finally { mutable.update { it.copy(saving = false) } }
         }

@@ -12,7 +12,8 @@ import java.util.UUID
 class RoomScheduleRepository(private val database: ScheduleDatabase, private val gate: ScheduleWriteGate) : ScheduleRepository {
     private val dao get() = database.schedules()
 
-    override fun observeSchedules(): Flow<List<SavedSchedule>> = dao.observe().map { rows -> rows.map { row ->
+    override fun observeSchedules(): Flow<List<SavedSchedule>> = dao.observe().map { rows -> rows.map(::saved) }
+    private fun saved(row: TermBundle): SavedSchedule {
         val term = row.term
         val periods = row.periods.associate { it.number to TimeRange(LocalTime.parse(it.start), LocalTime.parse(it.end)) }
         val modelTerm = Term(LocalDate.parse(term.firstMonday), term.weekCount)
@@ -21,12 +22,12 @@ class RoomScheduleRepository(private val database: ScheduleDatabase, private val
         val (associated, orphaned) = decoded.partition { exception ->
             visible.any { it.id == exception.arrangementId && runCatching { validateSingleException(modelTerm, it, periods, exception) }.isSuccess }
         }
-        val hidden = row.identities.filter { it.hidden && it.origin == "school" }.map { identity ->
+        val hidden = row.identities.filter { it.hidden }.map { identity ->
             HiddenSchoolCourse(arrangement(row.projections.single { it.id == identity.id }),
                 arrangement(identity.id, row.baselines.single { it.id == identity.id }.fields), CourseColor.entries[identity.colorSlot],
                 row.exceptions.filter { it.arrangementId == identity.id }.map(::singleException))
         }
-        SavedSchedule(
+        return SavedSchedule(
             UUID.fromString(term.id), "${term.year} 学年 · 第 ${term.semester.toInt() + 1} 学期${if (term.school == "local") "（手工）" else ""}",
             if (term.school == "local") null else SourceScope(term.accountDigest, term.year, term.semester), Term(LocalDate.parse(term.firstMonday), term.weekCount),
             periods,
@@ -37,8 +38,10 @@ class RoomScheduleRepository(private val database: ScheduleDatabase, private val
             term.year, term.semester,
             associated, orphaned,
             hidden,
+            row.reviews.singleOrNull()?.let { SchoolReview(UUID.fromString(it.id), SchoolSnapshotCodec.decode(it.payload), Instant.ofEpochMilli(it.fetchedAt)) },
+            row.baselines.associate { UUID.fromString(it.id) to arrangement(it.id, it.fields) },
         )
-    } }
+    }
 
     override suspend fun confirmImport(plan: ImportPlan): ImportOutcome {
         plan.validate()
@@ -60,7 +63,7 @@ class RoomScheduleRepository(private val database: ScheduleDatabase, private val
             val plan = ImportPlan(snapshot, Term(LocalDate.parse(old.firstMonday), old.weekCount), periods,
                 snapshot.doubts.indices.toSet(), fetchedAt)
             plan.validate()
-            // store 对已存在学期只在完整基线一致时推进时间，不创建新确认。
+            // 完整有效结果保存为基线或待核对候选；不把获取失败算作成功检查。
             store(plan)
         }
         CheckedSource(snapshot, fetchedAt, outcome)
@@ -73,14 +76,25 @@ class RoomScheduleRepository(private val database: ScheduleDatabase, private val
         if (terms.any { it.school == "sdwu" && it.accountDigest != snapshot.scope.accountDigest }) return ImportOutcome.DifferentAccount
         val old = terms.singleOrNull { it.school == "sdwu" && it.year == snapshot.scope.year && it.semester == snapshot.scope.semester }
         if (old != null) {
+            if (plan.fetchedAt.toEpochMilli() < old.checkedAt) return ImportOutcome.StaleSnapshot
             if (old.firstMonday != plan.term.firstMonday.toString() || old.weekCount != plan.term.weekCount ||
                 dao.periods(old.id).associate { it.number to TimeRange(LocalTime.parse(it.start), LocalTime.parse(it.end)) } != plan.periods
             ) return ImportOutcome.DifferentTermConfiguration
+            val previous = dao.review(old.id)
+            if (previous != null && plan.fetchedAt.toEpochMilli() < previous.fetchedAt) return ImportOutcome.StaleSnapshot
             val before = dao.baselines(old.id).map { it.fields }.toSet()
             val after = snapshot.meetings.map(::fields).toSet()
             if (before != after || dao.unscheduled(old.id).map { it.name }.toSet() != snapshot.unscheduledNames.toSet()) {
+                if (previous != null && SchoolSnapshotCodec.decode(previous.payload).sameContent(snapshot)) {
+                    dao.reviewChecked(previous.id, maxOf(previous.fetchedAt, plan.fetchedAt.toEpochMilli()))
+                } else {
+                    dao.clearReview(old.id)
+                    dao.insertReview(SchoolReviewEntity(UUID.randomUUID().toString(), old.id, plan.fetchedAt.toEpochMilli(), SchoolSnapshotCodec.encode(snapshot)))
+                }
+                dao.checked(old.id, maxOf(old.checkedAt, plan.fetchedAt.toEpochMilli()))
                 return ImportOutcome.ChangedSourceNeedsReview
             }
+            dao.clearReview(old.id)
             dao.checked(old.id, maxOf(old.checkedAt, plan.fetchedAt.toEpochMilli()))
             return ImportOutcome.Saved(UUID.fromString(old.id), alreadySaved = true)
         }
@@ -267,6 +281,72 @@ class RoomScheduleRepository(private val database: ScheduleDatabase, private val
     override suspend fun restoreArrangement(termId: UUID, expectedRevision: Long, arrangementId: UUID): EditOutcome =
         changeVisibility(termId, expectedRevision, arrangementId, restore = true)
 
+    override suspend fun confirmSchoolReview(plan: SchoolReviewPlan): ReviewOutcome {
+        try { return gate.tryWrite { database.withTransaction {
+            val bundle = dao.bundle(plan.termId.toString()) ?: return@withTransaction ReviewOutcome.Stale
+            val current = saved(bundle)
+            val review = current.schoolReview ?: return@withTransaction ReviewOutcome.Stale
+            if (review.id != plan.reviewId || current.revision != plan.revision) return@withTransaction ReviewOutcome.Stale
+            require(review.snapshot.scope == current.scope)
+            ImportPlan(review.snapshot, current.term, current.periods, plan.acknowledgedDoubts, review.fetchedAt).validate()
+            require(plan.links.keys == review.snapshot.meetings.indices.toSet())
+            val linked = plan.links.values.filterNotNull()
+            require(linked.distinct().size == linked.size && linked.all { it in current.schoolBaselines })
+            val active = current.origins.filterValues { it == CourseOrigin.SCHOOL }.keys
+            val activeBaselines = current.schoolBaselines.filterKeys { it in active }
+            val candidates = schoolReviewCandidates(review, activeBaselines)
+            candidates.forEach { candidate ->
+                if (candidate.exactMatches.size == 1) require(plan.links[candidate.index] == candidate.exactMatches.single())
+                if (plan.links[candidate.index] == null) {
+                    val history = schoolReviewCandidates(review, current.schoolBaselines.filterKeys { it !in active })[candidate.index]
+                    require(history.exactMatches.isEmpty() || candidate.index in plan.acknowledgedHistoryDuplicates)
+                }
+            }
+            require(plan.removed.keys == active - linked.toSet())
+            val raw = previewSchoolReview(current, plan.links, emptyMap())
+            require(plan.choices.keys == raw.conflicts.map { it.key }.toSet())
+            val preview = previewSchoolReview(current, plan.links, plan.choices)
+            require(preview.conflicts.isEmpty())
+            // All validation completes before writes. Conversion retains baseline as inactive history.
+            plan.removed.forEach { (id, choice) ->
+                when (choice) {
+                    RemovedSchoolChoice.DELETE -> dao.deleteIdentity(id.toString())
+                    RemovedSchoolChoice.KEEP_MANUAL -> {
+                        val projected = bundle.projections.single { it.id == id.toString() }
+                        dao.putManual(ManualEntity(projected.id, projected.fields))
+                        dao.origin(projected.id, "manual")
+                        dao.clearOverride(projected.id)
+                        dao.clearAcknowledgements(projected.id)
+                    }
+                }
+            }
+            preview.arrangements.forEach { value ->
+                val id = value.previousId ?: UUID.randomUUID()
+                val incoming = review.snapshot.meetings[value.candidate].arrangement(id)
+                val effective = value.arrangement.copy(id = id)
+                val next = fields(effective); val baseline = fields(incoming)
+                if (value.previousId == null) dao.insertIdentities(listOf(IdentityEntity(id.toString(), bundle.term.id)))
+                else { dao.origin(id.toString(), "school"); dao.clearManual(id.toString()) }
+                dao.putBaseline(BaselineEntity(id.toString(), baseline))
+                dao.putProjection(ProjectionEntity(id.toString(), bundle.term.id, next))
+                val scheduleChanged = effective.schedulingGroup() != incoming.schedulingGroup()
+                dao.putOverride(OverrideEntity(id.toString(), next.name.takeUnless { it == baseline.name },
+                    next.teacher.takeUnless { it == baseline.teacher }, next.room.takeUnless { it == baseline.room },
+                    next.weekday.takeIf { scheduleChanged }, next.weeks.takeIf { scheduleChanged }, next.timeMode.takeIf { scheduleChanged },
+                    next.periods.takeIf { scheduleChanged }, next.customStart.takeIf { scheduleChanged }, next.customEnd.takeIf { scheduleChanged }))
+                dao.clearAcknowledgements(id.toString())
+                if (incoming.room.isBlank()) dao.insertAcknowledgements(listOf(AcknowledgementEntity(id.toString(), "missing_room")))
+            }
+            dao.clearUnscheduled(bundle.term.id)
+            dao.insertUnscheduled(review.snapshot.unscheduledNames.map { UnscheduledEntity(UUID.randomUUID().toString(), bundle.term.id, it) })
+            dao.checked(bundle.term.id, maxOf(bundle.term.checkedAt, review.fetchedAt.toEpochMilli()))
+            dao.edited(bundle.term.id)
+            dao.clearReview(bundle.term.id)
+            val after = saved(requireNotNull(dao.bundle(bundle.term.id)))
+            ReviewOutcome.Saved(current.id, after.orphanedExceptions.size)
+        } } } catch (_: ScheduleBusyException) { return ReviewOutcome.Busy } catch (_: IllegalArgumentException) { return ReviewOutcome.Invalid }
+    }
+
     private suspend fun changeVisibility(termId: UUID, expectedRevision: Long, id: UUID, restore: Boolean): EditOutcome {
         try { return gate.tryWrite { database.withTransaction {
             val term = dao.terms().singleOrNull { it.id == termId.toString() } ?: return@withTransaction EditOutcome.Missing
@@ -274,9 +354,10 @@ class RoomScheduleRepository(private val database: ScheduleDatabase, private val
             val identity = dao.identity(id.toString()) ?: return@withTransaction EditOutcome.Missing
             if (identity.termId != term.id) return@withTransaction EditOutcome.Missing
             if (restore) {
-                if (identity.origin != "school" || !identity.hidden) return@withTransaction EditOutcome.Missing
+                if (dao.review(term.id) != null) return@withTransaction EditOutcome.ExceptionReviewRequired
+                if (!identity.hidden) return@withTransaction EditOutcome.Missing
                 val projected = dao.projections(term.id).singleOrNull { it.id == identity.id } ?: return@withTransaction EditOutcome.Missing
-                if (dao.baselines(term.id).none { it.id == identity.id }) return@withTransaction EditOutcome.Missing
+                if (dao.baselineHistory(term.id).none { it.id == identity.id }) return@withTransaction EditOutcome.Missing
                 // 当前已提交投影包含保留覆盖；恢复只改变隐藏标记。
                 arrangement(projected).time.ranges(dao.periods(term.id).associate { it.number to TimeRange(LocalTime.parse(it.start), LocalTime.parse(it.end)) })
                 dao.hide(identity.id, false)
