@@ -58,6 +58,8 @@ data class SavedSchedule(
     val origins: Map<UUID, CourseOrigin> = emptyMap(),
     val academicYear: String = scope?.year ?: term.firstMonday.year.toString(),
     val semester: String = scope?.semester ?: "0",
+    val exceptions: List<SingleException> = emptyList(),
+    val orphanedExceptions: List<SingleException> = emptyList(),
 )
 
 sealed interface ImportOutcome {
@@ -74,6 +76,8 @@ interface ScheduleRepository {
     suspend fun checkSource(expected: SourceScope?, fetch: suspend () -> SchoolSnapshot): CheckedSource
     suspend fun saveArrangement(termId: UUID, expectedRevision: Long, edit: ArrangementEdit): EditOutcome
     suspend fun createManualTerm(plan: ManualTermPlan): ManualTermOutcome
+    suspend fun saveSingleException(termId: UUID, expectedRevision: Long, exception: SingleException): EditOutcome
+    suspend fun clearSingleException(termId: UUID, expectedRevision: Long, arrangementId: UUID, originalDate: java.time.LocalDate): EditOutcome
 }
 
 data class CheckedSource(val snapshot: SchoolSnapshot, val fetchedAt: Instant, val outcome: ImportOutcome?)

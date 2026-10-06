@@ -47,7 +47,12 @@ fun ArrangementEditor(session: EditorSession, busy: Boolean, message: String, on
             .also { it.validate(saved.term, saved.periods) }
     }.getOrNull()
     val ranges = candidate?.scheduling?.time?.ranges(saved.periods).orEmpty()
-    val conflicts = candidate?.let { edit -> overlappingArrangementIds(edit.arrangement(initial?.id ?: java.util.UUID(0, 0)), saved.arrangements, saved.periods).size } ?: 0
+    val conflicts = candidate?.let { edit ->
+        val id = initial?.id ?: java.util.UUID(0, 0)
+        val current = saved.arrangements.filterNot { it.id == id } + edit.arrangement(id)
+        val active = saved.exceptions.filter { value -> current.any { it.id == value.arrangementId && runCatching { validateSingleException(saved.term, it, saved.periods, value) }.isSuccess } }
+        conflictingArrangementIds(occurrences(saved.term, current, active, saved.periods), id).size
+    } ?: 0
     BackHandler(!busy) { onCancel() }
     Scaffold(bottomBar = {
         Row(Modifier.fillMaxWidth().padding(16.dp), horizontalArrangement = LayoutArrangement.spacedBy(12.dp)) {

@@ -32,6 +32,7 @@ data class TimetableState(
     val createdTermId: UUID? = null,
     val editor: EditorSession? = null,
     val creatingTerm: Boolean = false,
+    val adjustment: AdjustmentSession? = null,
 ) {
     val selected: SavedSchedule? get() = schedules.firstOrNull { it.id == selectedId } ?: schedules.firstOrNull()
     val busy: Boolean get() = running || saving
@@ -200,14 +201,14 @@ class TimetableViewModel @Inject constructor(
         return true
     }
     fun endEditing() {
-        if (!mutable.value.saving) { mutable.update { it.copy(editing = false, editor = null, creatingTerm = false, editMessage = "") }; maybeCheck() }
+        if (!mutable.value.saving) { mutable.update { it.copy(editing = false, editor = null, adjustment = null, creatingTerm = false, editMessage = "") }; maybeCheck() }
     }
     fun openEditor(id: UUID?) {
         val saved = mutable.value.selected ?: return
         val initial = id?.let { courseId -> saved.arrangements.firstOrNull { it.id == courseId } ?: return }
-        if (beginEditing()) mutable.update { it.copy(editor = EditorSession(saved, initial), creatingTerm = false) }
+        if (beginEditing()) mutable.update { it.copy(editor = EditorSession(saved, initial), adjustment = null, creatingTerm = false) }
     }
-    fun openManualTerm() { if (beginEditing()) mutable.update { it.copy(editor = null, creatingTerm = true) } }
+    fun openManualTerm() { if (beginEditing()) mutable.update { it.copy(editor = null, adjustment = null, creatingTerm = true) } }
     fun saveEdit(saved: SavedSchedule, edit: ArrangementEdit) {
         if (mutable.value.busy || !mutable.value.editing) return
         mutable.update { it.copy(saving = true, editMessage = "正在保存…") }
@@ -239,6 +240,32 @@ class TimetableViewModel @Inject constructor(
             } catch (error: CancellationException) { throw error } catch (_: Exception) { mutable.update { it.copy(editMessage = "建立失败，原课表保留。") } } finally { mutable.update { it.copy(saving = false) } }
         }
     }
-    fun consumeEdited() { mutable.update { it.copy(editedId = null, editing = false, editor = null, creatingTerm = false) }; maybeCheck() }
+    fun consumeEdited() { mutable.update { it.copy(editedId = null, editing = false, editor = null, adjustment = null, creatingTerm = false) }; maybeCheck() }
     fun consumeCreatedTerm() { mutable.update { it.copy(createdTermId = null) } }
+
+    fun openAdjustment(id: UUID, originalDate: LocalDate) {
+        val saved = mutable.value.selected ?: return
+        val course = saved.arrangements.firstOrNull { it.id == id } ?: return
+        if (beginEditing()) mutable.update { it.copy(editor = null, adjustment = AdjustmentSession(saved, course, originalDate), creatingTerm = false) }
+    }
+    fun saveAdjustment(session: AdjustmentSession, next: SingleException?) {
+        if (mutable.value.busy || !mutable.value.editing) return
+        mutable.update { it.copy(saving = true, editMessage = "正在保存本次调整…") }
+        viewModelScope.launch {
+            try {
+                val result = if (next == null) repository.clearSingleException(session.schedule.id, session.schedule.revision, session.course.id, session.originalDate)
+                    else repository.saveSingleException(session.schedule.id, session.schedule.revision, next)
+                when (result) {
+                    is EditOutcome.Saved -> {
+                        val label = when (next) { null -> "本次调整已撤销。"; is SingleException.Cancel -> "本次停课已保存。"; is SingleException.Move -> "本次调课已保存。" }
+                        mutable.update { it.copy(editedId = result.arrangementId, status = label + if (result.overlappingArrangements > 0) "与 ${result.overlappingArrangements} 次课程重叠。" else "", editMessage = "") }
+                    }
+                    EditOutcome.Busy -> mutable.update { it.copy(editMessage = "课表正在更新，稍后重试。") }
+                    EditOutcome.Stale -> mutable.update { it.copy(editMessage = "课表已变化，请返回重新打开。此次未写入。") }
+                    EditOutcome.Missing -> mutable.update { it.copy(editMessage = "课程或调整已变化，请返回核对。") }
+                    EditOutcome.Invalid, EditOutcome.ExceptionReviewRequired -> mutable.update { it.copy(editMessage = "原日期、调至日期或时间不符合当前学期，请核对。") }
+                }
+            } catch (error: CancellationException) { throw error } catch (_: Exception) { mutable.update { it.copy(editMessage = "保存失败，原课表及调整保留。") } } finally { mutable.update { it.copy(saving = false) } }
+        }
+    }
 }

@@ -41,12 +41,19 @@ fun TimetableApp(state: TimetableState, model: TimetableViewModel, openSchool: (
     var page by rememberSaveable { mutableIntStateOf(0) }
     var importing by rememberSaveable { mutableStateOf(false) }
     var detailId by remember { mutableStateOf<UUID?>(null) }
+    var detailOriginalDate by remember { mutableStateOf<LocalDate?>(null) }
     LaunchedEffect(state.importedId) {
         if (state.importedId != null) { importing = false; page = 0; model.consumeImported() }
     }
     LaunchedEffect(state.editedId) { if (state.editedId != null) { detailId = null; model.consumeEdited() } }
     LaunchedEffect(state.createdTermId, state.selected?.id, state.saving) {
         if (state.createdTermId != null && state.createdTermId == state.selected?.id && !state.saving) model.openEditor(null)
+    }
+    val adjustment = state.adjustment
+    if (adjustment != null) {
+        AdjustmentEditor(adjustment, state.saving, state.editMessage, onCancel = model::endEditing,
+            onSave = { model.saveAdjustment(adjustment, it) })
+        return
     }
     val editor = state.editor
     if (editor != null) {
@@ -93,8 +100,8 @@ fun TimetableApp(state: TimetableState, model: TimetableViewModel, openSchool: (
                     if (state.busy) LinearProgressIndicator(Modifier.fillMaxWidth())
                     if (selected == null && page != 2) EmptySchedule(onImport = { importing = true }, onManual = model::openManualTerm)
                     else when (page) {
-                        0 -> selected?.let { TodayScreen(it, state.status) { course -> detailId = course } }
-                        1 -> selected?.let { WeekScreen(it) { course -> detailId = course } }
+                        0 -> selected?.let { TodayScreen(it, state.status) { course -> detailId = course.arrangementId; detailOriginalDate = course.originalDate } }
+                        1 -> selected?.let { WeekScreen(it) { course -> detailId = course.arrangementId; detailOriginalDate = course.originalDate } }
                         2 -> SettingsScreen(state, model, { importing = true }, checkUpdates)
                     }
                 }
@@ -103,15 +110,26 @@ fun TimetableApp(state: TimetableState, model: TimetableViewModel, openSchool: (
     }
     val selected = state.selected
     val detail = selected?.arrangements?.firstOrNull { it.id == detailId }
+    val selectedOccurrence = remember(selected, detailId, detailOriginalDate) {
+        if (detailId == null) null else selected?.let { saved -> occurrences(saved.term, saved.arrangements, saved.exceptions, saved.periods)
+            .firstOrNull { it.arrangementId == detailId && it.originalDate == detailOriginalDate } }
+    }
     if (detail != null) AlertDialog(onDismissRequest = { detailId = null }, title = { Text(detail.name) }, text = {
         Column(verticalArrangement = LayoutArrangement.spacedBy(8.dp)) {
             Text(if (selected.origins[detail.id] == CourseOrigin.MANUAL) "手工课程" else "学校课程")
             Text("教师：${detail.teacher.ifBlank { "未填写" }}")
-            Text("地点：${detail.room.ifBlank { "未填写" }}")
-            Text("星期${dayNames[detail.weekday - 1]} · ${times(detail.time.ranges(selected.periods))}")
+            Text("常规地点：${detail.room.ifBlank { "未填写" }}")
+            Text("常规：星期${dayNames[detail.weekday - 1]} · ${times(detail.time.ranges(selected.periods))}")
+            selectedOccurrence?.let { occurrence ->
+                Text("本次：${occurrence.date} · ${times(occurrence.ranges)}")
+                Text("本次地点：${occurrence.room.ifBlank { "未填写" }}")
+                if (occurrence.adjusted) Text("已调课 · 原日期 ${occurrence.originalDate}")
+            }
             Text("周次：${detail.weeks.sorted().joinToString("、")}")
             val time = detail.time
             if (time is MeetingTime.Periods) Text("节次：${time.numbers.sorted().joinToString("、")}")
+            val original = detailOriginalDate
+            if (original != null) OutlinedButton(onClick = { detailId = null; model.openAdjustment(detail.id, original) }, enabled = !state.busy) { Text("调整 $original 这一次") }
         }
     }, confirmButton = { TextButton(onClick = { detailId = null; model.openEditor(detail.id) }, enabled = !state.busy) { Text("编辑整条安排") } },
         dismissButton = { TextButton(onClick = { detailId = null }) { Text("完成") } })
@@ -129,10 +147,10 @@ private fun EmptySchedule(onImport: () -> Unit, onManual: () -> Unit) {
 }
 
 @Composable
-private fun TodayScreen(saved: SavedSchedule, status: String, onCourse: (UUID) -> Unit) {
+private fun TodayScreen(saved: SavedSchedule, status: String, onCourse: (Occurrence) -> Unit) {
     var now by remember { mutableStateOf(Instant.now()) }
     LaunchedEffect(saved.id) { while (true) { now = Instant.now(); delay(30_000) } }
-    val all = remember(saved) { occurrences(saved.term, saved.arrangements, emptyList(), saved.periods) }
+    val all = remember(saved) { occurrences(saved.term, saved.arrangements, saved.exceptions, saved.periods) }
     val summary = remember(all, now) { summarizeToday(saved.term, all, now) }
     LazyColumn(contentPadding = PaddingValues(16.dp), verticalArrangement = LayoutArrangement.spacedBy(12.dp)) {
         item {
@@ -158,7 +176,7 @@ private fun TodayScreen(saved: SavedSchedule, status: String, onCourse: (UUID) -
         item { Text("今日课程", style = MaterialTheme.typography.titleMedium) }
         if (summary.entries.isEmpty()) item { Text("今天没有课程，好好安排自己的时间。", Modifier.padding(vertical = 12.dp), color = MaterialTheme.colorScheme.onSurfaceVariant) }
         items(summary.entries, key = { "${it.occurrence.arrangementId}:${it.occurrence.originalDate}" }) { entry ->
-            CourseCard(entry.occurrence, entry.ended, entry.conflicting, saved.colors[entry.occurrence.arrangementId] ?: CourseColor.PINK) { onCourse(entry.occurrence.arrangementId) }
+            CourseCard(entry.occurrence, entry.ended, entry.conflicting, saved.colors[entry.occurrence.arrangementId] ?: CourseColor.PINK) { onCourse(entry.occurrence) }
         }
         item { Text(status, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
     }
@@ -172,6 +190,7 @@ private fun CourseCard(course: Occurrence, ended: Boolean, conflict: Boolean, co
             Text(times(course.ranges), style = MaterialTheme.typography.labelLarge)
             Text(course.name, style = MaterialTheme.typography.titleMedium)
             Text(course.room.ifBlank { "地点未填写" }, style = MaterialTheme.typography.bodyMedium)
+            if (course.adjusted) Text("已调课 · 原日期 ${course.originalDate}", style = MaterialTheme.typography.labelSmall)
             if (ended) Text("已结束", style = MaterialTheme.typography.labelSmall)
             if (conflict) Text("时间重叠", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.labelLarge)
         }
@@ -179,9 +198,9 @@ private fun CourseCard(course: Occurrence, ended: Boolean, conflict: Boolean, co
 }
 
 @Composable
-private fun WeekScreen(saved: SavedSchedule, onCourse: (UUID) -> Unit) {
+private fun WeekScreen(saved: SavedSchedule, onCourse: (Occurrence) -> Unit) {
     var week by rememberSaveable(saved.id.toString()) { mutableIntStateOf(saved.term.weekOf(LocalDate.now(SchoolZone)) ?: 1) }
-    val all = remember(saved) { occurrences(saved.term, saved.arrangements, emptyList(), saved.periods) }
+    val all = remember(saved) { occurrences(saved.term, saved.arrangements, saved.exceptions, saved.periods) }
     val monday = saved.term.dateOf(week, 1)
     val visible = all.filter { it.date in monday..monday.plusDays(6) }
     Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), horizontalArrangement = LayoutArrangement.SpaceBetween) {
@@ -234,13 +253,13 @@ private fun WeekScreen(saved: SavedSchedule, onCourse: (UUID) -> Unit) {
                 Box(Modifier.width(dayWidths[day - 1].dp).height(((end - start) * minuteScale + 64).dp)) {
                     saved.periods.values.forEach { range -> HorizontalDivider(Modifier.offset(y = ((range.start.toSecondOfDay() / 60 - start) * minuteScale).dp)) }
                     lanes.forEachIndexed { index, lane -> lane.forEach { segment ->
-                        Card(onClick = { onCourse(segment.occurrence.arrangementId) },
+                        Card(onClick = { onCourse(segment.occurrence) },
                             modifier = Modifier.offset(x = (index * width).dp, y = ((segment.range.start.toSecondOfDay() / 60 - start) * minuteScale).dp)
                                 .width(width.dp).height((ChronoUnit.MINUTES.between(segment.range.start, segment.range.end).toInt() * minuteScale).coerceAtLeast(52f).dp).padding(2.dp),
                             colors = CardDefaults.cardColors(containerColor = LocalCourseColors.current[(saved.colors[segment.occurrence.arrangementId] ?: CourseColor.PINK).ordinal], contentColor = MaterialTheme.colorScheme.onSurface)) {
                             Column(Modifier.padding(6.dp)) {
                                 Text(segment.occurrence.name, style = MaterialTheme.typography.labelLarge, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                                Text(segment.occurrence.room.ifBlank { "地点未提供" }, style = MaterialTheme.typography.labelSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                Text(if (segment.occurrence.adjusted) "调课 · ${segment.occurrence.room.ifBlank { "地点未填" }}" else segment.occurrence.room.ifBlank { "地点未提供" }, style = MaterialTheme.typography.labelSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
                             }
                         }
                     } }
@@ -278,7 +297,23 @@ private fun SettingsScreen(state: TimetableState, model: TimetableViewModel, onI
             item { Text("学期清单 · 未排课 ${unscheduled.size} 门", style = MaterialTheme.typography.titleMedium); Text("学校未提供固定时间，保留清单并等待安排。", style = MaterialTheme.typography.bodySmall) }
             items(unscheduled) { name -> Card(Modifier.fillMaxWidth()) { Text(name, Modifier.padding(16.dp)) } }
         }
-        item { Text("0.2.1 试用 · 课程保存在此设备", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+        val saved = state.selected
+        val adjustments = saved?.let { it.exceptions + it.orphanedExceptions }.orEmpty().sortedBy { it.originalDate }
+        if (saved != null && adjustments.isNotEmpty()) {
+            item { Text("单次调整 · ${adjustments.size}", style = MaterialTheme.typography.titleMedium) }
+            items(adjustments, key = { "${it.arrangementId}:${it.originalDate}" }) { adjustment ->
+                Card(onClick = { model.openAdjustment(adjustment.arrangementId, adjustment.originalDate) }, enabled = !state.busy, modifier = Modifier.fillMaxWidth()) {
+                    Column(Modifier.padding(16.dp)) {
+                        Text(saved.arrangements.firstOrNull { it.id == adjustment.arrangementId }?.name ?: "课程待核对", style = MaterialTheme.typography.titleMedium)
+                        Text("原日期：${adjustment.originalDate}")
+                        Text(when (adjustment) { is SingleException.Cancel -> "本次停课"; is SingleException.Move -> "调至 ${adjustment.date} · ${runCatching { times(adjustment.time.ranges(saved.periods)) }.getOrDefault("时间待核对")}" })
+                        if (adjustment in saved.orphanedExceptions) Text("关联待核对，原调整仍保留", color = MaterialTheme.colorScheme.error)
+                        Text("点此编辑或撤销", style = MaterialTheme.typography.labelSmall)
+                    }
+                }
+            }
+        }
+        item { Text("0.2.2 试用 · 课程保存在此设备", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
     }
 }
 

@@ -87,6 +87,9 @@ data class TermBundle(
     @Relation(parentColumn = "id", entityColumn = "termId") val projections: List<ProjectionEntity>,
     @Relation(parentColumn = "id", entityColumn = "termId") val unscheduled: List<UnscheduledEntity>,
     @Relation(parentColumn = "id", entityColumn = "termId") val identities: List<IdentityEntity>,
+    @Relation(parentColumn = "id", entityColumn = "arrangementId", associateBy = Junction(
+        value = IdentityEntity::class, parentColumn = "termId", entityColumn = "id",
+    )) val exceptions: List<ExceptionEntity>,
 )
 
 @Dao
@@ -112,6 +115,10 @@ interface ScheduleDao {
     @Upsert suspend fun putOverride(value: OverrideEntity)
     @Upsert suspend fun putManual(value: ManualEntity)
     @Query("SELECT * FROM manual_arrangements WHERE id = :id") suspend fun manual(id: String): ManualEntity?
+    @Upsert suspend fun putException(value: ExceptionEntity)
+    @Query("DELETE FROM single_exceptions WHERE arrangementId = :id AND originalDate = :date") suspend fun clearException(id: String, date: String)
+    @Query("SELECT e.* FROM single_exceptions e INNER JOIN identities i ON e.arrangementId = i.id WHERE i.termId = :termId AND i.hidden = 0")
+    suspend fun termExceptions(termId: String): List<ExceptionEntity>
     @Insert suspend fun insertTerm(term: TermEntity)
     @Insert suspend fun insertPeriods(periods: List<PeriodEntity>)
     @Insert suspend fun insertIdentities(identities: List<IdentityEntity>)

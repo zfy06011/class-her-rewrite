@@ -15,16 +15,22 @@ class RoomScheduleRepository(private val database: ScheduleDatabase, private val
     override fun observeSchedules(): Flow<List<SavedSchedule>> = dao.observe().map { rows -> rows.map { row ->
         val term = row.term
         val periods = row.periods.associate { it.number to TimeRange(LocalTime.parse(it.start), LocalTime.parse(it.end)) }
+        val modelTerm = Term(LocalDate.parse(term.firstMonday), term.weekCount)
+        val visible = row.projections.filter { projection -> row.identities.any { it.id == projection.id && !it.hidden } }.map(::arrangement)
+        val decoded = row.exceptions.filter { source -> visible.any { it.id.toString() == source.arrangementId } }.map(::singleException)
+        val (associated, orphaned) = decoded.partition { exception ->
+            visible.any { it.id == exception.arrangementId && runCatching { validateSingleException(modelTerm, it, periods, exception) }.isSuccess }
+        }
         SavedSchedule(
             UUID.fromString(term.id), "${term.year} 学年 · 第 ${term.semester.toInt() + 1} 学期${if (term.school == "local") "（手工）" else ""}",
             if (term.school == "local") null else SourceScope(term.accountDigest, term.year, term.semester), Term(LocalDate.parse(term.firstMonday), term.weekCount),
             periods,
-            row.projections.filter { projection -> row.identities.any { it.id == projection.id && !it.hidden } }
-                .map(::arrangement).sortedWith(compareBy({ it.weekday }, { it.time.ranges(periods).first().start }, { it.name })),
+            visible.sortedWith(compareBy({ it.weekday }, { it.time.ranges(periods).first().start }, { it.name })),
             row.unscheduled.map { it.name }.sorted(), if (term.school == "local") null else Instant.ofEpochMilli(term.checkedAt),
             term.revision, row.identities.associate { UUID.fromString(it.id) to CourseColor.entries[it.colorSlot] },
             row.identities.associate { UUID.fromString(it.id) to when (it.origin) { "school" -> CourseOrigin.SCHOOL; "manual" -> CourseOrigin.MANUAL; else -> error("Unsupported saved course origin") } },
             term.year, term.semester,
+            associated, orphaned,
         )
     } }
 
@@ -139,7 +145,12 @@ class RoomScheduleRepository(private val database: ScheduleDatabase, private val
                     previous.fields.customStart != newFields.customStart || previous.fields.customEnd != newFields.customEnd)
             ) return@withTransaction EditOutcome.ExceptionReviewRequired
             val visibleIds = dao.identities(term.id).filterNot { it.hidden }.map { it.id }.toSet()
-            val conflicts = overlappingArrangementIds(candidate, projections.filter { it.id in visibleIds }.map(::arrangement), periods).size
+            val finalArrangements = projections.filter { it.id in visibleIds && it.id != id.toString() }.map(::arrangement) + candidate
+            val activeExceptions = dao.termExceptions(term.id).map(::singleException).filter { value ->
+                finalArrangements.any { it.id == value.arrangementId && runCatching { validateSingleException(Term(LocalDate.parse(term.firstMonday), term.weekCount), it, periods, value) }.isSuccess }
+            }
+            val expanded = occurrences(Term(LocalDate.parse(term.firstMonday), term.weekCount), finalArrangements, activeExceptions, periods)
+            val conflicts = conflictingArrangementIds(expanded, id).size
             if (old == null) dao.insertIdentities(listOf(IdentityEntity(id.toString(), term.id, origin = "manual", colorSlot = edit.color.ordinal)))
             else {
                 if (old.origin == "school") {
@@ -180,5 +191,66 @@ class RoomScheduleRepository(private val database: ScheduleDatabase, private val
                 ManualTermOutcome.Saved(UUID.fromString(id))
             } }
         } catch (_: ScheduleBusyException) { return ManualTermOutcome.Busy } catch (_: IllegalArgumentException) { return ManualTermOutcome.Invalid }
+    }
+
+    private fun singleException(row: ExceptionEntity): SingleException {
+        val id = UUID.fromString(row.arrangementId); val date = LocalDate.parse(row.originalDate)
+        return when (row.kind) {
+            "cancel" -> SingleException.Cancel(id, date)
+            "move" -> {
+                val time = when (row.timeMode) {
+                    "periods" -> MeetingTime.Periods(decodeSet(requireNotNull(row.periods)))
+                    "custom" -> MeetingTime.Custom(TimeRange(LocalTime.parse(row.customStart), LocalTime.parse(row.customEnd)))
+                    else -> error("Unsupported exception time mode")
+                }
+                SingleException.Move(id, date, LocalDate.parse(row.targetDate), time, requireNotNull(row.room))
+            }
+            else -> error("Unsupported exception kind")
+        }
+    }
+
+    private fun exceptionRow(value: SingleException): ExceptionEntity = when (value) {
+        is SingleException.Cancel -> ExceptionEntity(value.arrangementId.toString(), value.originalDate.toString(), "cancel")
+        is SingleException.Move -> when (val time = value.time) {
+            is MeetingTime.Periods -> ExceptionEntity(value.arrangementId.toString(), value.originalDate.toString(), "move",
+                value.date.toString(), "periods", time.numbers.sorted().joinToString(","), room = value.room)
+            is MeetingTime.Custom -> ExceptionEntity(value.arrangementId.toString(), value.originalDate.toString(), "move",
+                value.date.toString(), "custom", customStart = time.range.start.toString(), customEnd = time.range.end.toString(), room = value.room)
+        }
+    }
+
+    override suspend fun saveSingleException(termId: UUID, expectedRevision: Long, exception: SingleException): EditOutcome =
+        writeSingle(termId, expectedRevision, exception.arrangementId, exception.originalDate, exception)
+
+    override suspend fun clearSingleException(termId: UUID, expectedRevision: Long, arrangementId: UUID, originalDate: LocalDate): EditOutcome =
+        writeSingle(termId, expectedRevision, arrangementId, originalDate, null)
+
+    private suspend fun writeSingle(termId: UUID, expectedRevision: Long, id: UUID, originalDate: LocalDate, next: SingleException?): EditOutcome {
+        try { return gate.tryWrite { database.withTransaction {
+            val term = dao.terms().singleOrNull { it.id == termId.toString() } ?: return@withTransaction EditOutcome.Missing
+            if (term.revision != expectedRevision) return@withTransaction EditOutcome.Stale
+            val identity = dao.identity(id.toString()) ?: return@withTransaction EditOutcome.Missing
+            if (identity.termId != term.id || identity.hidden) return@withTransaction EditOutcome.Missing
+            val projections = dao.projections(term.id)
+            val course = projections.singleOrNull { it.id == id.toString() }?.let(::arrangement) ?: return@withTransaction EditOutcome.Missing
+            val periods = dao.periods(term.id).associate { it.number to TimeRange(LocalTime.parse(it.start), LocalTime.parse(it.end)) }
+            val modelTerm = Term(LocalDate.parse(term.firstMonday), term.weekCount)
+            if (next != null) {
+                validateSingleException(modelTerm, course, periods, next)
+                dao.putException(exceptionRow(next))
+            } else {
+                if (dao.exceptions(id.toString()).none { it.originalDate == originalDate.toString() }) return@withTransaction EditOutcome.Missing
+                dao.clearException(id.toString(), originalDate.toString())
+            }
+            val visibleIds = dao.identities(term.id).filterNot { it.hidden }.map { it.id }.toSet()
+            val arrangements = projections.filter { it.id in visibleIds }.map(::arrangement)
+            val active = dao.termExceptions(term.id).map(::singleException).filter { value ->
+                arrangements.any { it.id == value.arrangementId && runCatching { validateSingleException(modelTerm, it, periods, value) }.isSuccess }
+            }
+            val all = occurrences(modelTerm, arrangements, active, periods)
+            val conflicts = conflictingOccurrencesFor(all, id, originalDate).size
+            dao.edited(term.id)
+            EditOutcome.Saved(id, conflicts)
+        } } } catch (_: ScheduleBusyException) { return EditOutcome.Busy } catch (_: IllegalArgumentException) { return EditOutcome.Invalid }
     }
 }

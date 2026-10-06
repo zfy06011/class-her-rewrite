@@ -270,4 +270,132 @@ class RoomScheduleRepositoryTest {
         database.openHelper.readableDatabase.query("SELECT COUNT(*) FROM manual_arrangements").use { cursor -> assertTrue(cursor.moveToFirst()); assertEquals(0, cursor.getInt(0)) }
         database.openHelper.writableDatabase.execSQL("DROP TRIGGER reject_manual_projection")
     }
+    @Test fun singleMoveKeepsRegularProjectionAndSchoolBaselineUnchanged() = runBlocking {
+        repository.confirmImport(plan)
+        val before = repository.observeSchedules().first().single(); val course = before.arrangements.single()
+        val move = SingleException.Move(course.id, plan.term.dateOf(1, 1), plan.term.dateOf(1, 3), MeetingTime.Periods(setOf(3, 4)), "单次地点")
+        assertTrue(repository.saveSingleException(before.id, before.revision, move) is EditOutcome.Saved)
+        val after = repository.observeSchedules().first().single()
+        assertEquals(before.arrangements, after.arrangements); assertEquals(listOf(move), after.exceptions)
+        assertEquals(meeting.teacher, database.schedules().baselines(before.id.toString()).single().fields.teacher)
+        assertNull(database.schedules().overrides(course.id.toString()))
+        val expanded = occurrences(after.term, after.arrangements, after.exceptions, after.periods)
+        assertEquals(listOf(move.date, plan.term.dateOf(2, 1)), expanded.map { it.date })
+    }
+    @Test fun cancellationPersistsAndCanBeUndoneAfterReopen() = runBlocking {
+        repository.confirmImport(plan)
+        var saved = repository.observeSchedules().first().single(); val id = saved.arrangements.single().id
+        val cancel = SingleException.Cancel(id, plan.term.dateOf(1, 1))
+        repository.saveSingleException(saved.id, saved.revision, cancel)
+        database.close(); reopen()
+        saved = repository.observeSchedules().first().single()
+        assertEquals(listOf(cancel), saved.exceptions)
+        assertEquals(1, occurrences(saved.term, saved.arrangements, saved.exceptions, saved.periods).size)
+        assertTrue(repository.clearSingleException(saved.id, saved.revision, id, cancel.originalDate) is EditOutcome.Saved)
+        saved = repository.observeSchedules().first().single()
+        assertTrue(saved.exceptions.isEmpty())
+        assertEquals(2, occurrences(saved.term, saved.arrangements, saved.exceptions, saved.periods).size)
+    }
+    @Test fun editingMovedDateUsesOriginalKeyAndReplacesSameRow() = runBlocking {
+        repository.confirmImport(plan)
+        var saved = repository.observeSchedules().first().single(); val id = saved.arrangements.single().id
+        val move = SingleException.Move(id, plan.term.dateOf(1, 1), plan.term.dateOf(2, 1), MeetingTime.Periods(setOf(1)), "")
+        assertEquals(1, (repository.saveSingleException(saved.id, saved.revision, move) as EditOutcome.Saved).overlappingArrangements)
+        saved = repository.observeSchedules().first().single()
+        val changed = move.copy(date = plan.term.dateOf(1, 7), time = MeetingTime.Custom(TimeRange(java.time.LocalTime.parse("18:00"), java.time.LocalTime.parse("19:00"))))
+        repository.saveSingleException(saved.id, saved.revision, changed)
+        assertEquals(1, database.schedules().exceptions(id.toString()).size)
+        assertEquals(listOf(changed), repository.observeSchedules().first().single().exceptions)
+    }
+    @Test fun twoOriginalDatesCanMoveToSameDayWithoutCollapsingIdentity() = runBlocking {
+        repository.confirmImport(plan)
+        var saved = repository.observeSchedules().first().single(); val id = saved.arrangements.single().id
+        val target = plan.term.dateOf(1, 3)
+        repository.saveSingleException(saved.id, saved.revision, SingleException.Move(id, plan.term.dateOf(1, 1), target, MeetingTime.Periods(setOf(1)), ""))
+        saved = repository.observeSchedules().first().single()
+        val result = repository.saveSingleException(saved.id, saved.revision, SingleException.Move(id, plan.term.dateOf(2, 1), target, MeetingTime.Periods(setOf(1)), "")) as EditOutcome.Saved
+        assertEquals(1, result.overlappingArrangements)
+        saved = repository.observeSchedules().first().single()
+        assertEquals(2, saved.exceptions.size)
+        assertEquals(2, occurrences(saved.term, saved.arrangements, saved.exceptions, saved.periods).count { it.date == target })
+    }
+    @Test fun invalidSingleDatesAndPeriodsDoNotWriteAnyAdjustment() = runBlocking {
+        repository.confirmImport(plan)
+        val before = repository.observeSchedules().first().single(); val id = before.arrangements.single().id
+        val good = SingleException.Move(id, plan.term.dateOf(1, 1), plan.term.dateOf(1, 3), MeetingTime.Periods(setOf(1)), "")
+        for (bad in listOf(good.copy(originalDate = plan.term.dateOf(1, 2)), good.copy(date = plan.term.lastDate.plusDays(1)), good.copy(time = MeetingTime.Periods(setOf(13))))) {
+            assertEquals(EditOutcome.Invalid, repository.saveSingleException(before.id, before.revision, bad))
+        }
+        assertEquals(before, repository.observeSchedules().first().single())
+    }
+    @Test fun staleSingleEditorCannotOverwriteNewCancellation() = runBlocking {
+        repository.confirmImport(plan)
+        val before = repository.observeSchedules().first().single(); val id = before.arrangements.single().id
+        val cancel = SingleException.Cancel(id, plan.term.dateOf(1, 1))
+        repository.saveSingleException(before.id, before.revision, cancel)
+        assertEquals(EditOutcome.Stale, repository.saveSingleException(before.id, before.revision, SingleException.Move(id, cancel.originalDate, plan.term.dateOf(1, 3), MeetingTime.Periods(setOf(1)), "")))
+        assertEquals(listOf(cancel), repository.observeSchedules().first().single().exceptions)
+    }
+    @Test fun existingExceptionsSurviveTeacherEditAndBlockSilentRecurrenceChanges() = runBlocking {
+        repository.confirmImport(plan)
+        var saved = repository.observeSchedules().first().single(); val course = saved.arrangements.single()
+        val cancel = SingleException.Cancel(course.id, plan.term.dateOf(1, 1))
+        repository.saveSingleException(saved.id, saved.revision, cancel)
+        saved = repository.observeSchedules().first().single()
+        val edit = ArrangementEdit(course.id, course.name, "修改后教师", course.room, SchedulingGroup(course.weekday, course.weeks, course.time))
+        repository.saveArrangement(saved.id, saved.revision, edit)
+        saved = repository.observeSchedules().first().single()
+        assertEquals(listOf(cancel), saved.exceptions)
+        assertEquals(EditOutcome.ExceptionReviewRequired, repository.saveArrangement(saved.id, saved.revision, edit.copy(scheduling = edit.scheduling.copy(weekday = 2))))
+        assertEquals(saved, repository.observeSchedules().first().single())
+    }
+    @Test fun singleAdjustmentDuringFetchIsRejectedByCommonWriteGate() = runBlocking {
+        repository.confirmImport(plan)
+        val saved = repository.observeSchedules().first().single(); val course = saved.arrangements.single()
+        val started = CompletableDeferred<Unit>(); val finish = CompletableDeferred<Unit>()
+        val check = async { repository.checkSource(plan.snapshot.scope) { started.complete(Unit); finish.await(); plan.snapshot } }
+        started.await()
+        try { assertEquals(EditOutcome.Busy, repository.saveSingleException(saved.id, saved.revision, SingleException.Cancel(course.id, plan.term.dateOf(1, 1)))) }
+        finally { finish.complete(Unit); check.await() }
+        assertTrue(repository.observeSchedules().first().single().exceptions.isEmpty())
+    }
+    @Test fun failedSingleWriteRollsBackExceptionAndRevision() = runBlocking(Dispatchers.IO) {
+        repository.confirmImport(plan)
+        val before = repository.observeSchedules().first().single(); val course = before.arrangements.single()
+        database.openHelper.writableDatabase.execSQL("CREATE TRIGGER reject_single BEFORE INSERT ON single_exceptions BEGIN SELECT RAISE(ABORT, 'synthetic single failure'); END")
+        try { repository.saveSingleException(before.id, before.revision, SingleException.Cancel(course.id, plan.term.dateOf(1, 1))); fail("Injected exception failure ignored") }
+        catch (_: Exception) { /* expected */ }
+        assertEquals(before, repository.observeSchedules().first().single())
+        database.openHelper.writableDatabase.execSQL("DROP TRIGGER reject_single")
+    }
+    @Test fun unmatchedOriginalDatesArePreservedAsReviewItemsAndCanBeCleared() = runBlocking(Dispatchers.IO) {
+        repository.confirmImport(plan)
+        var saved = repository.observeSchedules().first().single(); val id = saved.arrangements.single().id
+        val date = plan.term.dateOf(1, 2)
+        database.openHelper.writableDatabase.execSQL("INSERT INTO single_exceptions (arrangementId, originalDate, kind) VALUES (?, ?, 'cancel')", arrayOf(id.toString(), date.toString()))
+        saved = repository.observeSchedules().first().single()
+        assertTrue(saved.exceptions.isEmpty()); assertEquals(1, saved.orphanedExceptions.size)
+        assertEquals(2, occurrences(saved.term, saved.arrangements, saved.exceptions, saved.periods).size)
+        assertTrue(repository.clearSingleException(saved.id, saved.revision, id, date) is EditOutcome.Saved)
+        assertTrue(repository.observeSchedules().first().single().orphanedExceptions.isEmpty())
+    }
+    @Test fun singleExceptionCannotUseAnotherTermOrMissingCourse() = runBlocking {
+        repository.confirmImport(plan)
+        val saved = repository.observeSchedules().first().single(); val id = saved.arrangements.single().id
+        val other = repository.createManualTerm(ManualTermPlan("2025", "1", Term(LocalDate.parse("2026-03-02"), 19), plan.periods)) as ManualTermOutcome.Saved
+        val cancel = SingleException.Cancel(id, plan.term.dateOf(1, 1))
+        assertEquals(EditOutcome.Missing, repository.saveSingleException(other.termId, 1, cancel))
+        assertEquals(EditOutcome.Missing, repository.saveSingleException(saved.id, saved.revision, cancel.copy(arrangementId = java.util.UUID.randomUUID())))
+        assertTrue(repository.observeSchedules().first().single { it.id == saved.id }.exceptions.isEmpty())
+    }
+    @Test fun repeatedSchoolCheckDoesNotRemoveSingleAdjustments() = runBlocking {
+        repository.confirmImport(plan)
+        var saved = repository.observeSchedules().first().single(); val id = saved.arrangements.single().id
+        val cancel = SingleException.Cancel(id, plan.term.dateOf(1, 1))
+        repository.saveSingleException(saved.id, saved.revision, cancel)
+        repository.checkSource(plan.snapshot.scope) { plan.snapshot }
+        saved = repository.observeSchedules().first().single()
+        assertEquals(listOf(cancel), saved.exceptions)
+        assertEquals(1, occurrences(saved.term, saved.arrangements, saved.exceptions, saved.periods).size)
+    }
 }

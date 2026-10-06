@@ -96,6 +96,25 @@ data class Occurrence(
     val adjusted: Boolean,
 )
 
+fun validateSingleException(term: Term, arrangement: Arrangement, periods: Map<Int, TimeRange>, exception: SingleException) {
+    require(exception.arrangementId == arrangement.id)
+    require(term.weekOf(exception.originalDate) in arrangement.weeks && exception.originalDate.dayOfWeek.value == arrangement.weekday)
+    if (exception is SingleException.Move) {
+        require(term.weekOf(exception.date) != null && exception.room.length <= 200)
+        exception.time.ranges(periods)
+    }
+}
+
+fun conflictingOccurrencesFor(all: List<Occurrence>, arrangementId: UUID, originalDate: LocalDate): List<Occurrence> {
+    val target = all.singleOrNull { it.arrangementId == arrangementId && it.originalDate == originalDate } ?: return emptyList()
+    return all.filter { other -> (other.arrangementId != arrangementId || other.originalDate != originalDate) &&
+        other.date == target.date && target.ranges.any { range -> other.ranges.any(range::overlaps) }
+    }
+}
+
+fun conflictingArrangementIds(all: List<Occurrence>, arrangementId: UUID): Set<UUID> = all.filter { it.arrangementId == arrangementId }
+    .flatMap { conflictingOccurrencesFor(all, arrangementId, it.originalDate) }.map { it.arrangementId }.toSet()
+
 fun occurrences(
     term: Term,
     arrangements: List<Arrangement>,
