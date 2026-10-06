@@ -1,12 +1,12 @@
 # 双轨重写：当前任务交接
 
-更新：2026-10-06（0.2.2 已交付；继续删除、学校隐藏与恢复，0.2.3 本地准备，见第 20 节）。
+更新：2026-10-06（0.2.2 已交付；继续删除、学校隐藏与恢复，0.2.3 云端验证及 APK 通过；恢复代次方案已确认，见第 20～21 节，见第 20 节）。
 
 - 当前任务：首版个人课表 MVP；本轮补学校安排隐藏／恢复与手工安排删除，保留来源、修改和例外。整体目标仍未完成。
 - 确认状态：沿用需求、原生技术栈与 AD-1～AD-12；用户已确认第 16.3 节处理决定并授权专用试用签名。用户另已确认无 ID 关联只自动匹配完全一致记录、其余手动配对。用户还确认：同学期配置完全一致、明确确认导入后可接入学校并保留所有手工课程与 UUID。继续原技术栈与 AD-1～AD-12，不提前实施跨存储恢复方案。每次推送仍需确认。
 - 当前执行者：Codex；已实测仓库读写、pwsh／Python／Node／Git，之前可读取 Actions 与下载产物。稳定签名在本机生成，Actions Secrets 通过 GitHub 页面保存并核对名称；没有安装或运行本地 JDK／Gradle／Android SDK。
-- 目标分支／本次 APK 来源：`work/android-probe`，实际来源为授权推送的 `299375ffe8daf2edaf6d6343ed98b5b56b4b370d`，远端 ref 已核对一致。公开仓库 [zfy06011/class-her-rewrite](https://github.com/zfy06011/class-her-rewrite)。本地后续结果文档不代替此构建 SHA。
-- 进展：0.2.2 的 299375f 已通过 83 项测试并交付；结果记录本地 `20e0ab838c4bff2d8c0f5ce47fc7b65608488a7c` 未另推。0.2.3 删除／隐藏／恢复已在本地实现，37 文件语法与 schema 保持检查通过；92 项 Kotlin 测试、Room 新关系查询、lint 和新 APK 待云端，真机未验证。
+- 目标分支／本次 APK 来源：`work/android-probe`，实际来源为授权推送的 `a32bc2647ef66b15317eb956ffc6abe203411c5b`，远端 ref 一致。公开仓库 [zfy06011/class-her-rewrite](https://github.com/zfy06011/class-her-rewrite)。结果文档 HEAD 不代替此 APK SHA。
+- 进展：a32bc26 的 run `37406784519`／job `112086010051` success，92 tests／0 failures／0 ignored，lint 0 errors／12 warnings／0 hints；固定签名及 APK 产物核对通过，schema v2 逐字节一致。用户已确认第 21 节恢复代次机制，尚未实现；真实学校变化、后续合并／学期调整／备份和手机验收仍未完成。
 - 文档约定：本文件是唯一当前交接文档。第 8～15 节保留历史证据，当前状态以顶部与第 19～20 节为准。私人课表、会话、密钥及 APK 均不提交。
 
 ## 1. 已确认的首版需求
@@ -728,3 +728,51 @@ GitHub Actions 的第三方步骤固定到本轮 GitHub API 核对的提交 SHA�
 - **交付标准**：新云端检查及 APK 来源核对通过；手机隐藏一条学校安排、再次获取／重开仍隐藏，再恢复检查颜色与单次调整保留；删除一条手工安排，检查其例外同时移除而其他课程不变。核心试用只需 2～3 步。
 - **提交边界**：本轮代码、测试、版本与本 HANDOFF，获新授权后同推先前未推的 20e0ab8 结果记录；私人样本、密钥、APK、原型截图和未跟踪素材不加入。
 - **检查结论**：可以进入下一轮云端验证，尚未交付已验证 0.2.3。学校来源变化配对／合并／删除处理、学期调整、可靠前台检查、备份与真机验收仍是全 MVP 未完成项。
+
+### 0.2.3 本次授权推送（2026-10-06）
+
+- 用户回复“推送”，授权此前 a32bc26 及未推的 20e0ab8 结果记录。固定来源 `a32bc2647ef66b15317eb956ffc6abe203411c5b` 已推到公开仓库 `zfy06011/class-her-rewrite` 的 `work/android-probe`，远端 ref 一致；未推私人文件或其他引用。
+- [Run 37406784519](https://github.com/zfy06011/class-her-rewrite/actions/runs/37406784519)、job `112086010051`。初始已确认运行中，既有 parser／school request checks 成功，Unit tests and lint 运行中；继续同一 run，不因推送成功宣称本轮测试或 APK 通过。
+
+## 21. 备份恢复原子设计（2026-10-06 已确认，未实施）
+
+这是 AD-11 和第 5 节原子恢复缺口的具体方案。用户选择“采用代次切换方案（推荐）”，已批准该机制及下面的中断规则；目前只完成设计记录，没有改设置、恢复代码或数据库结构。后续完整备份实现还须覆盖尚未完成的来源历史映射和待处理冲突，不能只备份当前界面投影。
+
+### 当前事实与边界
+
+- 当前 PreferenceSettings 使用一个 theme key，并把 IOException 变为空设置；ViewModel 分别收集 settings.theme 和 repository.observeSchedules，两个回调各自更新 state。直接连写 Room 和此 DataStore 无法满足课程／设置共同生效与失败原数据保留。
+- [DataStore 官方 API](https://developer.android.com/reference/androidx/datastore/core/DataStore) 明确 updateData 的写入成功返回以持久化完成为界，并在 transform／写盘失败时中止；[Room Transaction API](https://developer.android.com/reference/androidx/room/Transaction) 以事务成功／异常决定提交或回滚。这些是各自的事务，**不证明二者天然共享事务**。
+- 继续 Room 保存业务、DataStore 保存轻量设置；不切换栈，不复制运行中的 DB 文件，不导出学校凭据／会话。跨存储原子性通过准备设置代次和 Room 激活指针获得，仍须实现与故障注入验证。
+
+### 已确认机制
+
+1. Room 增加当前激活设置代次 metadata（稳定初始 legacy 代次），课程业务数据和该指针在同一 DB 事务中提交。DataStore 保留按代次的不可变设置快照；普通设置修改更新当前激活代次。迁移期只有 legacy 代次可读旧 theme key，其他代次缺失不能默默用默认主题顶替。
+2. 校验带独立格式版本的业务 JSON：学期／作息、UUID、关系、基线、手工内容、本地覆盖、单次例外、隐藏、历史映射、待处理冲突和设置。展示恢复摘要，用户确认后才进入公共全局写入锁；主题修改也必须接此锁，避免恢复期间独立设置写入。
+3. 在不改当前激活设置的前提下，用 DataStore.updateData 写入新代次 g1，等待持久化成功；失败／取消时 DB 不动，旧数据和旧设置继续生效。新分支暂时不可见，不以准备成功宣称恢复成功。
+4. Room 短事务整体替换已校验业务内容、清除成功检查计时、设置重新登录 gate，并将激活指针切到 g1。网络与文件读取／DataStore 写入均不放入此 DB 事务；DB 失败／取消整体回滚，仍读旧代次 g0，g1 只是可稍后清理的未激活分支。
+5. **提交点是上述 Room 事务提交**。提交前取消保留旧状态；提交后不能再把清理失败或晚到的取消报告成“恢复失败、原数据未变”。以持久化的激活代次判断是否已生效；必要的短提交／结果识别保持不可被中断成错误报告，不扩大为不可取消的全程。
+6. UI 不再以两个独立 flow 回调更新课程／设置；统一应用快照读取 Room 业务＋激活代次，并订阅该代次的 DataStore 设置，完整成对后一次更新 state。准备 g1 不发新外观；Room 激活 g1 时必须同时交付新课程＋g1 设置。所选代次缺失／设置损坏时明确报错并阻止写入，不显示半套数据，不默默清空或设默认。
+7. 恢复提交后启动学校会话清理；Room 的重新登录 gate 必须先持久化，自动检查在会话清理／重新登录／来源核对完成前不能启动。进程在清理前退出时，重启先补清理，不能复用旧学校会话。未激活旧／新设置分支的清理只在可确认激活指针后进行，不影响恢复成功与当前数据。
+
+### 中断／失败语义与必须验证项
+
+- 读文件、校验、摘要确认之前：不改任何当前业务／设置。
+- DataStore 新代次准备失败，或准备后 DB 尚未开始／DB 中断：g0 业务＋g0 设置，不能出现 g0＋g1。
+- Room 提交完成后进程终止：重启读 g1 业务＋g1 设置；先完成会话清理和登录 gate，不能出现 g1＋g0。
+- 当前代次设置损坏／缺失：报错并保护存储，不伪造成功；恢复成功后的孤立分支清理失败不回滚当前数据或冒充恢复失败。
+- 必须有实际 DataStore 和 Room 磁盘故障注入、每个提交边界重开、观察者发射序列校验、取消前后结果识别、旧配置迁移、备份往返／坏文件／未知版本／引用错误及范围检查。设计推演不能替代这些测试，不能据此称原子恢复已验证。
+
+### 确认结果
+
+用户已明确采用 Room 激活指针＋按代次 DataStore 设置＋统一应用快照，允许新增 DB metadata 的显式迁移及调整 settings 读写与界面组合；继续原 Kotlin／Room／DataStore／Hilt 栈。架构授权来自本轮独立问题答复，不是把 0.2.3 推送授权扩展为架构授权。具体实现和故障注入仍未执行，不能称原子恢复已验证。
+
+### 0.2.3 云端结果与交付
+
+- [Run 37406784519](https://github.com/zfy06011/class-her-rewrite/actions/runs/37406784519)、job `112086010051` 最终 success，push 来源准确 SHA `a32bc2647ef66b15317eb956ffc6abe203411c5b`。Kotlin／Room 编译、92 个测试、lint、固定签名打包、apksigner 和 artifact 上传均通过，未跳过必需检查。
+- HTML 报告：92 tests、0 failures、0 ignored、100% successful，9.571s；Room 仓库 42 项和其他既有规则 50 项均通过，包含隐藏不复活／修改例外 UUID 保留／重启恢复、手工级联删除、权限所属及 revision／并发拒绝、失败回滚与恢复重叠。真实手机和学校变化仍未验证。
+- Lint 0 errors／12 warnings／0 hints，告警类别与 0.2.2 相同，没有新增 Room 关系索引告警；KAPT 单测未识别处理选项告警保留。导出 schema 2 与已有实际 v2 JSON 逐字节一致，仍 10 表，identityHash `68d5a95280efbc1998d259938b4a515e`，无需新 migration。
+- APK：`0.2.3-trial`／versionCode `4`，`com.classher.timetable`，`debug`，12,403,176 bytes，来源 a32bc26。SHA-256 `ea1b529316b3f9a32c5476b55b6df21297dfa09429b89861690b3cdcdacc9bac`。云端完整签名校验通过，下载 APK v2 公开证书元数据匹配稳定指纹 `0772965c1f74eb3ed73e486429e81f8d6985206d3cb2d609c444daa090931e0e`。
+- [APK artifact 11387573544](https://github.com/zfy06011/class-her-rewrite/actions/runs/37406784519/artifacts/11387573544)，[诊断 artifact 11387333817](https://github.com/zfy06011/class-her-rewrite/actions/runs/37406784519/artifacts/11387333817)，预计北京时间 2026-10-20 11:01 到期。下载 APK ZIP digest `a545fea1dfb906baadf7562d1ec0e665f026beec2b85548fc66b5596788f1b28`、报告 ZIP digest `db2cb125f2fc99c8e3752128b5ced49cdfac5f393c811583dad69ed04f20d058` 与本地 ZIP SHA-256 一致；provenance 的源码、版本、包名、变体、APK 哈希和证书指纹匹配。
+- 本地 `.verify-tmp/ci-37406784519/ClassHer-0.2.3-trial-a32bc26-debug.apk`，同目录保留 ZIP／报告／provenance，不提交 APK 或临时下载 URL。
+- 核心试用：① 覆盖安装并检查原课程和调整还在；② 隐藏一条学校安排，再获取／重开仍隐藏，从我的核对基线及保留修改后恢复；③ 删除一条手工安排，检查对应单次调整消失，其他课程保留。
+- 检查结论：可交付本次候选 APK；真机操作、最新学校变化恢复预览与合并、学期调整、可靠前台检查、完整备份往返和第 21 节的实际原子恢复仍未完成。结果和新确认设计只本地提交，未另行推送；不能拿本结果文档 SHA 代替 APK 来源。
