@@ -1,12 +1,12 @@
 # 双轨重写：当前任务交接
 
-更新：2026-10-06（0.2.3 已交付；学校更新核对 0.2.4 首轮云端失败，JUnit 返回类型已修复，待新授权重建）。
+更新：2026-10-06（学校更新核对 0.2.4 修复重建通过，APK 核对完成；继续首版 MVP 未完成项）。
 
 - 当前任务：首版个人课表 MVP；本轮补学校变化持久化、明确配对、字段合并与学校删除处理，保留来源、修改和例外。整体目标仍未完成。
 - 确认状态：沿用需求、原生技术栈与 AD-1～AD-12；用户已确认第 16.3 节处理决定并授权专用试用签名。用户另已确认无 ID 关联只自动匹配完全一致记录、其余手动配对。用户还确认：同学期配置完全一致、明确确认导入后可接入学校并保留所有手工课程与 UUID。继续原技术栈与 AD-1～AD-12，不提前实施跨存储恢复方案。每次推送仍需确认。
 - 当前执行者：Codex；已实测仓库读写、pwsh／Python／Node／Git，之前可读取 Actions 与下载产物。稳定签名在本机生成，Actions Secrets 通过 GitHub 页面保存并核对名称；没有安装或运行本地 JDK／Gradle／Android SDK。
-- 目标分支／本次 APK 来源：`work/android-probe`，实际来源为授权推送的 `a32bc2647ef66b15317eb956ffc6abe203411c5b`，远端 ref 一致。公开仓库 [zfy06011/class-her-rewrite](https://github.com/zfy06011/class-her-rewrite)。结果文档 HEAD 不代替此 APK SHA。
-- 进展：0.2.4 的 run 37445566107 因新增测试返回类型使仓库测试类初始化失败，未生成 APK；已修复并保留实际 schema 3，待单独确认重推。0.2.3 的 a32bc26 run `37406784519`／job `112086010051` success，92 tests／0 failures／0 ignored，lint 0 errors／12 warnings／0 hints；固定签名及 APK 产物核对通过，schema v2 逐字节一致。用户已确认第 21 节恢复代次机制，尚未实现；学校更新配对／合并已进入本轮实现但未云端验证，学期调整／备份和手机验收仍未完成。
+- 目标分支／本次 APK 来源：`work/android-probe`，实际来源为授权推送的 `d386c0ba79c5820fca5d79023b0e93ae93f4c72b`，远端 ref 一致。公开仓库 [zfy06011/class-her-rewrite](https://github.com/zfy06011/class-her-rewrite)。结果文档 HEAD 不代替此 APK SHA。
+- 进展：d386c0b 的 run 37446230168／job 112211609686 success，109 tests／0 failures／0 ignored，lint 0 errors／12 warnings；学校核对写入、实际 v1／v2→3 迁移及固定签名 APK 通过。首次 JUnit 初始化失败已修复，没有跳过测试。手机真实学校更新、学期调整、可靠冷启动／6 小时自动检查、完整备份与恢复仍未完成。
 - 文档约定：本文件是唯一当前交接文档。第 8～15 节保留历史证据，当前状态以顶部与第 22 节为准。私人课表、会话、密钥及 APK 均不提交。
 
 ## 1. 已确认的首版需求
@@ -810,3 +810,21 @@ GitHub Actions 的第三方步骤固定到本轮 GitHub API 核对的提交 SHA�
 - 其他测试类报告确认 ScheduleMigrationTest 4 tests／0 failures／0 ignored（实际 v1／v2→v3），SchoolSnapshotCodecTest 2 tests／0 failures／0 ignored。保留云端实际导出 schema 3：11 表，identityHash 83342d2c48ac8d796d26887aab4d8c07；schema 1／2 与已提交文件逐字节一致。导出来自 a861b47 的实际 Room 编译，修复只改测试，不改数据库结构。
 - 诊断 artifact 11402899112，ZIP SHA-256 f0368ab92c14eb075c4ebfa04cd2a0ef022866569f019952da0c3890c7e302cc 与元数据一致；本地 .verify-tmp/ci-37445566107/reports.zip，未提交私人数据或诊断 ZIP。
 - 下一次提交范围：单个测试返回类型修复、实际 schema 3 及本结果记录；版本仍 0.2.4-trial／code 5，需新授权推送后重跑全部 109 测试／lint／固定签名 APK。
+
+
+### 0.2.4 修复授权重推（2026-10-06）
+
+- 用户选择“批准修复推送并重建”，准确来源 d386c0ba79c5820fca5d79023b0e93ae93f4c72b 已推到 zfy06011/class-her-rewrite 的 work/android-probe，远端一致。此次授权仅消费于此提交，不顺带推送后续结果记录。
+- [Run 37446230168](https://github.com/zfy06011/class-her-rewrite/actions/runs/37446230168) 为 push／d386c0b，目前 in_progress；继续跟进同一 run，不能以首轮编译或迁移通过代替本轮完整结果。
+
+
+### 0.2.4 云端结果与交付
+
+- [Run 37446230168](https://github.com/zfy06011/class-her-rewrite/actions/runs/37446230168)／job 112211609686 最终 success，push 来源 d386c0ba79c5820fca5d79023b0e93ae93f4c72b。既有 parser／学校请求检查、Kotlin／Room 编译、全部单测、lint、固定签名构建、apksigner 证书及上传通过，没有降低门槛或跳过测试。
+- 报告：109 tests／0 failures／0 ignored，100%，11.265s；RoomScheduleRepositoryTest 56 项／0 失败，ScheduleMigrationTest 4 项／0 失败，SchoolSnapshotCodecTest 2 项／0 失败，其余规则 47 项。包含学校核对的磁盘重开／候选重复替换／完整配对、字段和排课组冲突、隐藏转手工／恢复／历史重关联、删除级联、过期确认、全局锁、失败保护与事务回滚。测试只使用合成数据，真实学校变化仍未测试。
+- Lint 0 errors／12 warnings／0 hints：OldTargetApi 1、AndroidGradlePluginVersion 1、GradleDependency 4、NewerVersionAvailable 4、ObsoleteSdkInt 1、KaptUsageInsteadOfKsp 1；KAPT 单测未识别处理选项告警仍存在。schema 1／2／3 与已提交导出逐字节一致；实际 Room 迁移覆盖 v1／v2→v3，v3 11 表，identityHash 83342d2c48ac8d796d26887aab4d8c07。
+- APK：0.2.4-trial／versionCode 5、com.classher.timetable、debug，12,485,096 bytes，实际来源 d386c0b。SHA-256 b3fe6d226408708c6282f67530ac6ca503d48a7428f8ae4250011b23f927a152。来源 provenance 匹配 SHA／版本／包名／变体／APK 哈希；另外直接读取 APK 二进制 Manifest 验证 versionCode 5／versionName 0.2.4-trial／package com.classher.timetable。云端完整 apksigner 验证通过，下载 APK v2 公开证书元数据匹配稳定指纹 0772965c1f74eb3ed73e486429e81f8d6985206d3cb2d609c444daa090931e0e。
+- [APK artifact 11403124282](https://github.com/zfy06011/class-her-rewrite/actions/runs/37446230168/artifacts/11403124282)、[诊断 artifact 11403034663](https://github.com/zfy06011/class-her-rewrite/actions/runs/37446230168/artifacts/11403034663)，预计北京时间 2026-10-20 17:56 到期。APK ZIP SHA-256 b62123d687db5fa13dbe16418775bd5b720065c3179af3d86505285cc1da377f、报告 ZIP SHA-256 642d25c0d014f59b26121615b2f10f1de7e2bfdd517718aeb2191bb26f0ecbc1，与元数据一致。
+- 本地 .verify-tmp/ci-37446230168/ClassHer-0.2.4-trial-d386c0b-debug.apk；同目录保留 ZIP、报告、provenance 与 verification.json。不提交 APK、临时下载 URL、密钥或私人样本。
+- 核心试用：① 覆盖安装，核对已有课程、颜色、隐藏与单次调整保留；② 立即检查，有学校变化时到我的核对配对／冲突，关闭重开未确认候选仍在；若无变化应显示一致；③ 若出现学校删除候选，隐藏安排转手工仍隐藏，再明确恢复并核对原内容和调整保留。无需用户制造学校变化或上传完整私人课表。
+- 检查结论：本次候选 APK 可交付；真实学校变化、手机界面与覆盖升级尚未测试。完整 MVP 仍缺学期起点／作息编辑、可靠冷启动学校恢复与 6 小时自动检查实测、完整备份及第 21 节原子恢复。结果文档只本地提交，APK 来源保持 d386c0b；没有正式发布或合并主分支。
