@@ -398,4 +398,128 @@ class RoomScheduleRepositoryTest {
         assertEquals(listOf(cancel), saved.exceptions)
         assertEquals(1, occurrences(saved.term, saved.arrangements, saved.exceptions, saved.periods).size)
     }
+    @Test fun schoolHideRetainsIdentityOverridesColorAndExceptionsWithoutResurrection() = runBlocking {
+        repository.confirmImport(plan)
+        var saved = repository.observeSchedules().first().single(); val course = saved.arrangements.single()
+        repository.saveArrangement(saved.id, saved.revision, ArrangementEdit(course.id, course.name, "保留教师修改", "保留地点修改", SchedulingGroup(course.weekday, course.weeks, course.time), CourseColor.PURPLE))
+        saved = repository.observeSchedules().first().single()
+        val cancel = SingleException.Cancel(course.id, plan.term.dateOf(1, 1))
+        repository.saveSingleException(saved.id, saved.revision, cancel)
+        saved = repository.observeSchedules().first().single()
+        assertTrue(repository.removeArrangement(saved.id, saved.revision, course.id) is EditOutcome.Saved)
+        saved = repository.observeSchedules().first().single()
+        assertTrue(saved.arrangements.isEmpty()); assertTrue(saved.exceptions.isEmpty())
+        val hidden = saved.hiddenSchoolCourses.single()
+        assertEquals(course.id, hidden.arrangement.id); assertEquals("保留教师修改", hidden.arrangement.teacher)
+        assertEquals(course.teacher, hidden.schoolBaseline.teacher); assertEquals(CourseColor.PURPLE, hidden.color)
+        assertEquals(listOf(cancel), hidden.exceptions)
+        repository.checkSource(plan.snapshot.scope) { plan.snapshot }
+        saved = repository.observeSchedules().first().single()
+        assertTrue(saved.arrangements.isEmpty()); assertEquals(1, saved.hiddenSchoolCourses.size)
+        database.close(); reopen()
+        saved = repository.observeSchedules().first().single()
+        repository.restoreArrangement(saved.id, saved.revision, course.id)
+        saved = repository.observeSchedules().first().single()
+        assertEquals(course.id, saved.arrangements.single().id); assertEquals("保留教师修改", saved.arrangements.single().teacher)
+        assertEquals(CourseColor.PURPLE, saved.colors[course.id]); assertEquals(listOf(cancel), saved.exceptions)
+        assertTrue(saved.hiddenSchoolCourses.isEmpty())
+    }
+    @Test fun deletingManualCourseCascadesBusinessProjectionAndSingleExceptionOnly() = runBlocking {
+        repository.confirmImport(plan)
+        var saved = repository.observeSchedules().first().single()
+        val manual = repository.saveArrangement(saved.id, saved.revision, ArrangementEdit(null, "手工删除示例", "", "", SchedulingGroup(2, setOf(1), MeetingTime.Periods(setOf(1))))) as EditOutcome.Saved
+        saved = repository.observeSchedules().first().single()
+        repository.saveSingleException(saved.id, saved.revision, SingleException.Cancel(manual.arrangementId, plan.term.dateOf(1, 2)))
+        saved = repository.observeSchedules().first().single()
+        repository.removeArrangement(saved.id, saved.revision, manual.arrangementId)
+        assertNull(database.schedules().identity(manual.arrangementId.toString()))
+        assertNull(database.schedules().manual(manual.arrangementId.toString()))
+        assertTrue(database.schedules().exceptions(manual.arrangementId.toString()).isEmpty())
+        saved = repository.observeSchedules().first().single()
+        assertEquals(1, saved.arrangements.size); assertEquals(CourseOrigin.SCHOOL, saved.origins[saved.arrangements.single().id])
+        assertEquals(1, database.schedules().terms().size)
+    }
+    @Test fun staleDeleteAndRestoreCannotChangeNewerCourseState() = runBlocking {
+        repository.confirmImport(plan)
+        val before = repository.observeSchedules().first().single(); val course = before.arrangements.single()
+        repository.saveArrangement(before.id, before.revision, ArrangementEdit(course.id, course.name, "新教师", course.room, SchedulingGroup(course.weekday, course.weeks, course.time)))
+        assertEquals(EditOutcome.Stale, repository.removeArrangement(before.id, before.revision, course.id))
+        var saved = repository.observeSchedules().first().single()
+        repository.removeArrangement(saved.id, saved.revision, course.id)
+        saved = repository.observeSchedules().first().single(); val stale = saved.revision
+        repository.saveArrangement(saved.id, saved.revision, ArrangementEdit(null, "另外手工课程", "", "", SchedulingGroup(2, setOf(1), MeetingTime.Periods(setOf(1)))))
+        assertEquals(EditOutcome.Stale, repository.restoreArrangement(saved.id, stale, course.id))
+        assertEquals(1, repository.observeSchedules().first().single().hiddenSchoolCourses.size)
+    }
+    @Test fun hideAndRestoreDuringFetchAreRejectedBySharedWriteGate() = runBlocking {
+        repository.confirmImport(plan)
+        var saved = repository.observeSchedules().first().single(); val id = saved.arrangements.single().id
+        repository.removeArrangement(saved.id, saved.revision, id)
+        saved = repository.observeSchedules().first().single()
+        val started = CompletableDeferred<Unit>(); val finish = CompletableDeferred<Unit>()
+        val check = async { repository.checkSource(plan.snapshot.scope) { started.complete(Unit); finish.await(); plan.snapshot } }
+        started.await()
+        try {
+            assertEquals(EditOutcome.Busy, repository.restoreArrangement(saved.id, saved.revision, id))
+            assertEquals(EditOutcome.Busy, repository.removeArrangement(saved.id, saved.revision, id))
+            assertEquals(1, repository.observeSchedules().first().single().hiddenSchoolCourses.size)
+        } finally { finish.complete(Unit); check.await() }
+    }
+    @Test fun failedSchoolHideRollsBackVisibilityAndRevision() = runBlocking(Dispatchers.IO) {
+        repository.confirmImport(plan)
+        val before = repository.observeSchedules().first().single(); val id = before.arrangements.single().id
+        database.openHelper.writableDatabase.execSQL("CREATE TRIGGER reject_hide BEFORE UPDATE ON identities BEGIN SELECT RAISE(ABORT, 'synthetic hide failure'); END")
+        try { repository.removeArrangement(before.id, before.revision, id); fail("Injected hide failure ignored") }
+        catch (_: Exception) { /* expected */ }
+        assertEquals(before, repository.observeSchedules().first().single())
+        database.openHelper.writableDatabase.execSQL("DROP TRIGGER reject_hide")
+    }
+    @Test fun failedManualDeletionRetainsBusinessAndLinkedAdjustment() = runBlocking(Dispatchers.IO) {
+        repository.confirmImport(plan)
+        var saved = repository.observeSchedules().first().single()
+        val manual = repository.saveArrangement(saved.id, saved.revision, ArrangementEdit(null, "未删除手工示例", "", "", SchedulingGroup(2, setOf(1), MeetingTime.Periods(setOf(1))))) as EditOutcome.Saved
+        saved = repository.observeSchedules().first().single()
+        repository.saveSingleException(saved.id, saved.revision, SingleException.Cancel(manual.arrangementId, plan.term.dateOf(1, 2)))
+        val before = repository.observeSchedules().first().single()
+        database.openHelper.writableDatabase.execSQL("CREATE TRIGGER reject_delete BEFORE DELETE ON identities BEGIN SELECT RAISE(ABORT, 'synthetic delete failure'); END")
+        try { repository.removeArrangement(before.id, before.revision, manual.arrangementId); fail("Injected delete failure ignored") }
+        catch (_: Exception) { /* expected */ }
+        assertEquals(before, repository.observeSchedules().first().single())
+        assertNotNull(database.schedules().manual(manual.arrangementId.toString()))
+        assertEquals(1, database.schedules().exceptions(manual.arrangementId.toString()).size)
+        database.openHelper.writableDatabase.execSQL("DROP TRIGGER reject_delete")
+    }
+    @Test fun restorationRejectsVisibleManualAndWrongTermIdentities() = runBlocking {
+        repository.confirmImport(plan)
+        var saved = repository.observeSchedules().first().single(); val schoolId = saved.arrangements.single().id
+        assertEquals(EditOutcome.Missing, repository.restoreArrangement(saved.id, saved.revision, schoolId))
+        val manual = repository.saveArrangement(saved.id, saved.revision, ArrangementEdit(null, "不可恢复手工示例", "", "", SchedulingGroup(2, setOf(1), MeetingTime.Periods(setOf(1))))) as EditOutcome.Saved
+        saved = repository.observeSchedules().first().single()
+        assertEquals(EditOutcome.Missing, repository.restoreArrangement(saved.id, saved.revision, manual.arrangementId))
+        val other = repository.createManualTerm(ManualTermPlan("2025", "1", Term(LocalDate.parse("2026-03-02"), 19), plan.periods)) as ManualTermOutcome.Saved
+        assertEquals(EditOutcome.Missing, repository.removeArrangement(other.termId, 1, schoolId))
+    }
+    @Test fun restoringHiddenSchoolCourseKeepsOverlapWarningAndAllRows() = runBlocking {
+        repository.confirmImport(plan)
+        var saved = repository.observeSchedules().first().single(); val schoolId = saved.arrangements.single().id
+        repository.removeArrangement(saved.id, saved.revision, schoolId)
+        saved = repository.observeSchedules().first().single()
+        repository.saveArrangement(saved.id, saved.revision, ArrangementEdit(null, "重叠手工课程", "", "", SchedulingGroup(1, setOf(1), MeetingTime.Periods(setOf(1)))))
+        saved = repository.observeSchedules().first().single()
+        val result = repository.restoreArrangement(saved.id, saved.revision, schoolId) as EditOutcome.Saved
+        assertEquals(1, result.overlappingArrangements)
+        saved = repository.observeSchedules().first().single()
+        assertEquals(2, saved.arrangements.size); assertTrue(saved.hiddenSchoolCourses.isEmpty())
+    }
+    @Test fun failedRestorationDoesNotUnhideOrAdvanceRevision() = runBlocking(Dispatchers.IO) {
+        repository.confirmImport(plan)
+        var saved = repository.observeSchedules().first().single(); val id = saved.arrangements.single().id
+        repository.removeArrangement(saved.id, saved.revision, id)
+        val before = repository.observeSchedules().first().single()
+        database.openHelper.writableDatabase.execSQL("CREATE TRIGGER reject_restore BEFORE UPDATE ON identities BEGIN SELECT RAISE(ABORT, 'synthetic restore failure'); END")
+        try { repository.restoreArrangement(before.id, before.revision, id); fail("Injected restoration failure ignored") }
+        catch (_: Exception) { /* expected */ }
+        assertEquals(before, repository.observeSchedules().first().single())
+        database.openHelper.writableDatabase.execSQL("DROP TRIGGER reject_restore")
+    }
 }

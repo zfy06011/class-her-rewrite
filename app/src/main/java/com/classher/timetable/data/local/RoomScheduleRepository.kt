@@ -21,6 +21,11 @@ class RoomScheduleRepository(private val database: ScheduleDatabase, private val
         val (associated, orphaned) = decoded.partition { exception ->
             visible.any { it.id == exception.arrangementId && runCatching { validateSingleException(modelTerm, it, periods, exception) }.isSuccess }
         }
+        val hidden = row.identities.filter { it.hidden && it.origin == "school" }.map { identity ->
+            HiddenSchoolCourse(arrangement(row.projections.single { it.id == identity.id }),
+                arrangement(identity.id, row.baselines.single { it.id == identity.id }.fields), CourseColor.entries[identity.colorSlot],
+                row.exceptions.filter { it.arrangementId == identity.id }.map(::singleException))
+        }
         SavedSchedule(
             UUID.fromString(term.id), "${term.year} 学年 · 第 ${term.semester.toInt() + 1} 学期${if (term.school == "local") "（手工）" else ""}",
             if (term.school == "local") null else SourceScope(term.accountDigest, term.year, term.semester), Term(LocalDate.parse(term.firstMonday), term.weekCount),
@@ -31,6 +36,7 @@ class RoomScheduleRepository(private val database: ScheduleDatabase, private val
             row.identities.associate { UUID.fromString(it.id) to when (it.origin) { "school" -> CourseOrigin.SCHOOL; "manual" -> CourseOrigin.MANUAL; else -> error("Unsupported saved course origin") } },
             term.year, term.semester,
             associated, orphaned,
+            hidden,
         )
     } }
 
@@ -108,13 +114,15 @@ class RoomScheduleRepository(private val database: ScheduleDatabase, private val
     private fun decodeSet(value: String): Set<Int> = value.split(",").map(String::toInt).toSet()
 
     private fun arrangement(projection: ProjectionEntity): Arrangement {
-        val fields = projection.fields
+        return arrangement(projection.id, projection.fields)
+    }
+    private fun arrangement(id: String, fields: MeetingFields): Arrangement {
         val time = when (fields.timeMode) {
             "periods" -> MeetingTime.Periods(decodeSet(fields.periods))
             "custom" -> MeetingTime.Custom(TimeRange(LocalTime.parse(fields.customStart), LocalTime.parse(fields.customEnd)))
             else -> error("Unsupported saved time mode")
         }
-        return Arrangement(UUID.fromString(projection.id), fields.name, fields.teacher, fields.room, fields.weekday, decodeSet(fields.weeks), time)
+        return Arrangement(UUID.fromString(id), fields.name, fields.teacher, fields.room, fields.weekday, decodeSet(fields.weeks), time)
     }
 
     private fun fields(arrangement: Arrangement): MeetingFields = when (val time = arrangement.time) {
@@ -249,6 +257,45 @@ class RoomScheduleRepository(private val database: ScheduleDatabase, private val
             }
             val all = occurrences(modelTerm, arrangements, active, periods)
             val conflicts = conflictingOccurrencesFor(all, id, originalDate).size
+            dao.edited(term.id)
+            EditOutcome.Saved(id, conflicts)
+        } } } catch (_: ScheduleBusyException) { return EditOutcome.Busy } catch (_: IllegalArgumentException) { return EditOutcome.Invalid }
+    }
+
+    override suspend fun removeArrangement(termId: UUID, expectedRevision: Long, arrangementId: UUID): EditOutcome =
+        changeVisibility(termId, expectedRevision, arrangementId, restore = false)
+    override suspend fun restoreArrangement(termId: UUID, expectedRevision: Long, arrangementId: UUID): EditOutcome =
+        changeVisibility(termId, expectedRevision, arrangementId, restore = true)
+
+    private suspend fun changeVisibility(termId: UUID, expectedRevision: Long, id: UUID, restore: Boolean): EditOutcome {
+        try { return gate.tryWrite { database.withTransaction {
+            val term = dao.terms().singleOrNull { it.id == termId.toString() } ?: return@withTransaction EditOutcome.Missing
+            if (term.revision != expectedRevision) return@withTransaction EditOutcome.Stale
+            val identity = dao.identity(id.toString()) ?: return@withTransaction EditOutcome.Missing
+            if (identity.termId != term.id) return@withTransaction EditOutcome.Missing
+            if (restore) {
+                if (identity.origin != "school" || !identity.hidden) return@withTransaction EditOutcome.Missing
+                val projected = dao.projections(term.id).singleOrNull { it.id == identity.id } ?: return@withTransaction EditOutcome.Missing
+                if (dao.baselines(term.id).none { it.id == identity.id }) return@withTransaction EditOutcome.Missing
+                // 当前已提交投影包含保留覆盖；恢复只改变隐藏标记。
+                arrangement(projected).time.ranges(dao.periods(term.id).associate { it.number to TimeRange(LocalTime.parse(it.start), LocalTime.parse(it.end)) })
+                dao.hide(identity.id, false)
+            } else when (identity.origin) {
+                "school" -> { if (identity.hidden) return@withTransaction EditOutcome.Missing; dao.hide(identity.id, true) }
+                "manual" -> dao.deleteIdentity(identity.id)
+                else -> return@withTransaction EditOutcome.Invalid
+            }
+            var conflicts = 0
+            if (restore) {
+                val periods = dao.periods(term.id).associate { it.number to TimeRange(LocalTime.parse(it.start), LocalTime.parse(it.end)) }
+                val modelTerm = Term(LocalDate.parse(term.firstMonday), term.weekCount)
+                val visibleIds = dao.identities(term.id).filterNot { it.hidden }.map { it.id }.toSet()
+                val courses = dao.projections(term.id).filter { it.id in visibleIds }.map(::arrangement)
+                val exceptions = dao.termExceptions(term.id).map(::singleException).filter { exception ->
+                    courses.any { it.id == exception.arrangementId && runCatching { validateSingleException(modelTerm, it, periods, exception) }.isSuccess }
+                }
+                conflicts = conflictingArrangementIds(occurrences(modelTerm, courses, exceptions, periods), id).size
+            }
             dao.edited(term.id)
             EditOutcome.Saved(id, conflicts)
         } } } catch (_: ScheduleBusyException) { return EditOutcome.Busy } catch (_: IllegalArgumentException) { return EditOutcome.Invalid }

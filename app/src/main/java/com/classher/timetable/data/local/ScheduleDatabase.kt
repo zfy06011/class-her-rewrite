@@ -90,6 +90,9 @@ data class TermBundle(
     @Relation(parentColumn = "id", entityColumn = "arrangementId", associateBy = Junction(
         value = IdentityEntity::class, parentColumn = "termId", entityColumn = "id",
     )) val exceptions: List<ExceptionEntity>,
+    @Relation(parentColumn = "id", entityColumn = "id", associateBy = Junction(
+        value = IdentityEntity::class, parentColumn = "termId", entityColumn = "id",
+    )) val baselines: List<BaselineEntity>,
 )
 
 @Dao
@@ -119,6 +122,8 @@ interface ScheduleDao {
     @Query("DELETE FROM single_exceptions WHERE arrangementId = :id AND originalDate = :date") suspend fun clearException(id: String, date: String)
     @Query("SELECT e.* FROM single_exceptions e INNER JOIN identities i ON e.arrangementId = i.id WHERE i.termId = :termId AND i.hidden = 0")
     suspend fun termExceptions(termId: String): List<ExceptionEntity>
+    @Query("UPDATE identities SET hidden = :hidden WHERE id = :id") suspend fun hide(id: String, hidden: Boolean)
+    @Query("DELETE FROM identities WHERE id = :id") suspend fun deleteIdentity(id: String)
     @Insert suspend fun insertTerm(term: TermEntity)
     @Insert suspend fun insertPeriods(periods: List<PeriodEntity>)
     @Insert suspend fun insertIdentities(identities: List<IdentityEntity>)

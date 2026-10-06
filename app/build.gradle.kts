@@ -21,8 +21,8 @@ android {
         applicationId = "com.classher.timetable"
         minSdk = 26
         targetSdk = 36
-        versionCode = 3
-        versionName = "0.2.2-trial"
+        versionCode = 4
+        versionName = "0.2.3-trial"
     }
     buildFeatures { compose = true }
     sourceSets.getByName("test").resources.srcDir("schemas")

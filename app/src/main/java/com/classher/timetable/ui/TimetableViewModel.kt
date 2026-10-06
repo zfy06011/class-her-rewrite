@@ -33,6 +33,7 @@ data class TimetableState(
     val editor: EditorSession? = null,
     val creatingTerm: Boolean = false,
     val adjustment: AdjustmentSession? = null,
+    val management: CourseManagementSession? = null,
 ) {
     val selected: SavedSchedule? get() = schedules.firstOrNull { it.id == selectedId } ?: schedules.firstOrNull()
     val busy: Boolean get() = running || saving
@@ -201,14 +202,14 @@ class TimetableViewModel @Inject constructor(
         return true
     }
     fun endEditing() {
-        if (!mutable.value.saving) { mutable.update { it.copy(editing = false, editor = null, adjustment = null, creatingTerm = false, editMessage = "") }; maybeCheck() }
+        if (!mutable.value.saving) { mutable.update { it.copy(editing = false, editor = null, adjustment = null, management = null, creatingTerm = false, editMessage = "") }; maybeCheck() }
     }
     fun openEditor(id: UUID?) {
         val saved = mutable.value.selected ?: return
         val initial = id?.let { courseId -> saved.arrangements.firstOrNull { it.id == courseId } ?: return }
-        if (beginEditing()) mutable.update { it.copy(editor = EditorSession(saved, initial), adjustment = null, creatingTerm = false) }
+        if (beginEditing()) mutable.update { it.copy(editor = EditorSession(saved, initial), adjustment = null, management = null, creatingTerm = false) }
     }
-    fun openManualTerm() { if (beginEditing()) mutable.update { it.copy(editor = null, adjustment = null, creatingTerm = true) } }
+    fun openManualTerm() { if (beginEditing()) mutable.update { it.copy(editor = null, adjustment = null, management = null, creatingTerm = true) } }
     fun saveEdit(saved: SavedSchedule, edit: ArrangementEdit) {
         if (mutable.value.busy || !mutable.value.editing) return
         mutable.update { it.copy(saving = true, editMessage = "正在保存…") }
@@ -240,13 +241,13 @@ class TimetableViewModel @Inject constructor(
             } catch (error: CancellationException) { throw error } catch (_: Exception) { mutable.update { it.copy(editMessage = "建立失败，原课表保留。") } } finally { mutable.update { it.copy(saving = false) } }
         }
     }
-    fun consumeEdited() { mutable.update { it.copy(editedId = null, editing = false, editor = null, adjustment = null, creatingTerm = false) }; maybeCheck() }
+    fun consumeEdited() { mutable.update { it.copy(editedId = null, editing = false, editor = null, adjustment = null, management = null, creatingTerm = false) }; maybeCheck() }
     fun consumeCreatedTerm() { mutable.update { it.copy(createdTermId = null) } }
 
     fun openAdjustment(id: UUID, originalDate: LocalDate) {
         val saved = mutable.value.selected ?: return
         val course = saved.arrangements.firstOrNull { it.id == id } ?: return
-        if (beginEditing()) mutable.update { it.copy(editor = null, adjustment = AdjustmentSession(saved, course, originalDate), creatingTerm = false) }
+        if (beginEditing()) mutable.update { it.copy(editor = null, adjustment = AdjustmentSession(saved, course, originalDate), management = null, creatingTerm = false) }
     }
     fun saveAdjustment(session: AdjustmentSession, next: SingleException?) {
         if (mutable.value.busy || !mutable.value.editing) return
@@ -266,6 +267,36 @@ class TimetableViewModel @Inject constructor(
                     EditOutcome.Invalid, EditOutcome.ExceptionReviewRequired -> mutable.update { it.copy(editMessage = "原日期、调至日期或时间不符合当前学期，请核对。") }
                 }
             } catch (error: CancellationException) { throw error } catch (_: Exception) { mutable.update { it.copy(editMessage = "保存失败，原课表及调整保留。") } } finally { mutable.update { it.copy(saving = false) } }
+        }
+    }
+    fun openRemoval(id: UUID) {
+        val saved = mutable.value.selected ?: return
+        val course = saved.arrangements.firstOrNull { it.id == id } ?: return
+        if (beginEditing()) mutable.update { it.copy(editor = null, adjustment = null, creatingTerm = false, management = CourseManagementSession(saved, course, false)) }
+    }
+    fun openRestoration(id: UUID) {
+        val saved = mutable.value.selected ?: return
+        val hidden = saved.hiddenSchoolCourses.firstOrNull { it.arrangement.id == id } ?: return
+        if (beginEditing()) mutable.update { it.copy(editor = null, adjustment = null, creatingTerm = false, management = CourseManagementSession(saved, hidden.arrangement, true, hidden)) }
+    }
+    fun confirmManagement(session: CourseManagementSession) {
+        if (mutable.value.busy || !mutable.value.editing) return
+        mutable.update { it.copy(saving = true, editMessage = "正在保存…") }
+        viewModelScope.launch {
+            try {
+                val result = if (session.restore) repository.restoreArrangement(session.schedule.id, session.schedule.revision, session.course.id)
+                    else repository.removeArrangement(session.schedule.id, session.schedule.revision, session.course.id)
+                when (result) {
+                    is EditOutcome.Saved -> {
+                        val status = if (session.restore) "课程已恢复。" else if (session.schedule.origins[session.course.id] == CourseOrigin.SCHOOL) "课程已隐藏，来源和修改保留。" else "手工课程已删除。"
+                        mutable.update { it.copy(editedId = result.arrangementId, status = status + if (result.overlappingArrangements > 0) "恢复后与 ${result.overlappingArrangements} 条安排重叠。" else "", editMessage = "") }
+                    }
+                    EditOutcome.Busy -> mutable.update { it.copy(editMessage = "课表正在更新，稍后重试。") }
+                    EditOutcome.Stale -> mutable.update { it.copy(editMessage = "课表已变化，请取消并重新打开确认。此次未写入。") }
+                    EditOutcome.Missing -> mutable.update { it.copy(editMessage = "课程状态已变化，请返回核对。") }
+                    EditOutcome.Invalid, EditOutcome.ExceptionReviewRequired -> mutable.update { it.copy(editMessage = "当前数据需要核对，原课程未改变。") }
+                }
+            } catch (error: CancellationException) { throw error } catch (_: Exception) { mutable.update { it.copy(editMessage = "保存失败，原课程和关联数据保留。") } } finally { mutable.update { it.copy(saving = false) } }
         }
     }
 }

@@ -108,6 +108,8 @@ fun TimetableApp(state: TimetableState, model: TimetableViewModel, openSchool: (
             }
         }
     }
+    state.management?.let { session -> CourseManagementDialog(session, state.saving, state.editMessage,
+        onCancel = model::endEditing, onConfirm = { model.confirmManagement(session) }) }
     val selected = state.selected
     val detail = selected?.arrangements?.firstOrNull { it.id == detailId }
     val selectedOccurrence = remember(selected, detailId, detailOriginalDate) {
@@ -128,6 +130,9 @@ fun TimetableApp(state: TimetableState, model: TimetableViewModel, openSchool: (
             Text("周次：${detail.weeks.sorted().joinToString("、")}")
             val time = detail.time
             if (time is MeetingTime.Periods) Text("节次：${time.numbers.sorted().joinToString("、")}")
+            OutlinedButton(onClick = { detailId = null; model.openRemoval(detail.id) }, enabled = !state.busy) {
+                Text(if (selected.origins[detail.id] == CourseOrigin.SCHOOL) "隐藏学校安排" else "删除手工安排")
+            }
             val original = detailOriginalDate
             if (original != null) OutlinedButton(onClick = { detailId = null; model.openAdjustment(detail.id, original) }, enabled = !state.busy) { Text("调整 $original 这一次") }
         }
@@ -271,6 +276,7 @@ private fun WeekScreen(saved: SavedSchedule, onCourse: (Occurrence) -> Unit) {
 
 @Composable
 private fun SettingsScreen(state: TimetableState, model: TimetableViewModel, onImport: () -> Unit, fetch: () -> Unit) {
+    var showCourses by rememberSaveable(state.selected?.id?.toString()) { mutableStateOf(false) }
     LazyColumn(contentPadding = PaddingValues(16.dp), verticalArrangement = LayoutArrangement.spacedBy(16.dp)) {
         item {
             Text("我的课表", style = MaterialTheme.typography.titleLarge)
@@ -313,7 +319,32 @@ private fun SettingsScreen(state: TimetableState, model: TimetableViewModel, onI
                 }
             }
         }
-        item { Text("0.2.2 试用 · 课程保存在此设备", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+        if (saved != null && saved.hiddenSchoolCourses.isNotEmpty()) {
+            item { Text("已隐藏学校安排 · ${saved.hiddenSchoolCourses.size}", style = MaterialTheme.typography.titleMedium) }
+            items(saved.hiddenSchoolCourses, key = { it.arrangement.id.toString() }) { hidden ->
+                Card(onClick = { model.openRestoration(hidden.arrangement.id) }, enabled = !state.busy, modifier = Modifier.fillMaxWidth()) {
+                    Column(Modifier.padding(16.dp)) {
+                        Text(hidden.arrangement.name, style = MaterialTheme.typography.titleMedium)
+                        Text("保留本地修改及 ${hidden.exceptions.size} 项单次调整")
+                        Text("点此核对并恢复", style = MaterialTheme.typography.labelSmall)
+                    }
+                }
+            }
+        }
+        if (saved != null && saved.arrangements.isNotEmpty()) {
+            item { TextButton(onClick = { showCourses = !showCourses }) { Text(if (showCourses) "收起全部安排" else "查看全部安排（${saved.arrangements.size}）") } }
+            if (showCourses) items(saved.arrangements, key = { it.id.toString() }) { course ->
+                Card(Modifier.fillMaxWidth()) { Column(Modifier.padding(16.dp)) {
+                    Text(course.name, style = MaterialTheme.typography.titleMedium)
+                    Text("星期${dayNames[course.weekday - 1]} · ${times(course.time.ranges(saved.periods))}")
+                    Row(horizontalArrangement = LayoutArrangement.spacedBy(8.dp)) {
+                        TextButton(onClick = { model.openEditor(course.id) }, enabled = !state.busy) { Text("编辑整条") }
+                        TextButton(onClick = { model.openRemoval(course.id) }, enabled = !state.busy) { Text(if (saved.origins[course.id] == CourseOrigin.SCHOOL) "隐藏" else "删除") }
+                    }
+                } }
+            }
+        }
+        item { Text("0.2.3 试用 · 课程保存在此设备", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
     }
 }
 
