@@ -1,12 +1,12 @@
 # 双轨重写：当前任务交接
 
-更新：2026-10-06（0.2.1 已交付；继续单次调课／停课及撤销，0.2.2 本地准备，见第 19 节）。
+更新：2026-10-06（0.2.1 已交付；继续单次调课／停课及撤销，0.2.2 云端验证与稳定签名 APK 已通过，真机待试用，见第 19 节）。
 
 - 当前任务：首版个人课表 MVP；本轮实现按课程 UUID＋原日期保存单次调停、在今日／周课表应用、提供撤销入口。整体目标仍未完成。
 - 确认状态：沿用需求、原生技术栈与 AD-1～AD-12；用户已确认第 16.3 节处理决定并授权专用试用签名。用户另已确认无 ID 关联只自动匹配完全一致记录、其余手动配对。用户还确认：同学期配置完全一致、明确确认导入后可接入学校并保留所有手工课程与 UUID。继续原技术栈与 AD-1～AD-12，不提前实施跨存储恢复方案。每次推送仍需确认。
 - 当前执行者：Codex；已实测仓库读写、pwsh／Python／Node／Git，之前可读取 Actions 与下载产物。稳定签名在本机生成，Actions Secrets 通过 GitHub 页面保存并核对名称；没有安装或运行本地 JDK／Gradle／Android SDK。
-- 目标分支／本次 APK 来源：`work/android-probe`，本次授权推送准确 SHA 为 `d4ed6cca92a71960c1e764f0b3cf316680e6bfc7`，远端 ref 已核对一致。公开仓库 [zfy06011/class-her-rewrite](https://github.com/zfy06011/class-her-rewrite)。本地后续结果记录不代替此构建 SHA；旧 0.2.0 来源仍为 4e4baaa。
-- 进展：0.2.1 的 d4ed6cc 已通过 68 项测试并交付；结果／schema v2 本地提交 `158a91985ff7bcb6a8da7654a4d2c4353c51c34d` 未另推。本轮 0.2.2 的单次调整源码已写入，36 个文件语法及显示绑定检查通过；83 个 Kotlin 测试、Room 关系查询、lint、新 APK 和真机结果待重新验证。
+- 目标分支／本次 APK 来源：`work/android-probe`，实际来源为授权推送的 `299375ffe8daf2edaf6d6343ed98b5b56b4b370d`，远端 ref 已核对一致。公开仓库 [zfy06011/class-her-rewrite](https://github.com/zfy06011/class-her-rewrite)。本地后续结果文档不代替此构建 SHA。
+- 进展：299375f 的 run `37404733372`／job `112079656922` success，83 tests／0 failures／0 ignored；lint 0 errors／12 warnings／0 hints，固定签名与下载产物来源核对通过。schema v2 与上版实际文件逐字节一致。手机单次调停／撤销与重启仍待试用，后续删除隐藏恢复、变化合并与备份等尚未完成。
 - 文档约定：本文件是唯一当前交接文档。第 8～15 节保留历史证据，当前状态以顶部与第 18～19 节为准。私人课表、会话、密钥及 APK 均不提交。
 
 ## 1. 已确认的首版需求
@@ -685,3 +685,20 @@ GitHub Actions 的第三方步骤固定到本轮 GitHub API 核对的提交 SHA�
 - **交付标准**：云端编译／83 项／lint／稳定签名 APK 通过；手机把某次课程跨周调到同学期另一日、只取消某一天、重启后从我的撤销并恢复常规显示。核心试用限 2～3 条即可。
 - **提交边界**：本轮代码／测试／版本／HANDOFF，下一次获授权推送同时包含先前未推的 158a919 结果及实际 schema v2。私人样本、签名、APK、原型截图和未跟踪素材不加入。
 - **检查结论**：可进入下一次云端验证，尚不能交付已验证 0.2.2 APK。后续删除隐藏恢复、变更配对与合并、学期调整、可靠前台自动检查和备份恢复仍需继续。
+
+### 0.2.2 本次授权推送（2026-10-06）
+
+- 用户明确回复“推送”，授权此前请求中的 299375f 和未推的 158a919。执行固定 SHA `299375ffe8daf2edaf6d6343ed98b5b56b4b370d` 到公开仓库 `zfy06011/class-her-rewrite` 的 `work/android-probe` 推送成功，远端 ref 一致；没有推私人文件或其他引用。
+- [Run 37404733372](https://github.com/zfy06011/class-her-rewrite/actions/runs/37404733372)、job `112079656922`，push 来源为上述提交。已确认 job 正在运行，首个快照显示 parser／school request checks 成功，Android packages 阶段运行中；继续跟进同一 run，不把推送成功写成测试或 APK 通过。
+
+### 0.2.2 云端结果与交付（2026-10-06）
+
+- [Run 37404733372](https://github.com/zfy06011/class-her-rewrite/actions/runs/37404733372)、job `112079656922` 最终 success。push 来源准确 SHA `299375ffe8daf2edaf6d6343ed98b5b56b4b370d`；Kotlin／Room 编译与关系查询生成、83 个测试、lint、固定签名打包、apksigner 校验和两个 artifact 上传均成功，没有跳过必需检查。
+- 实际 HTML：83 tests、0 failures、0 ignored、100% successful，12.112s。Room 仓库 33 项，单次例外纯规则 3 项，其余既有规则 47 项均通过。覆盖原日期身份不变、单次调停／重启撤销、多原日期同日、不改常规投影和基线、错误输入拒绝、旧 revision、原例外保留、并发拒绝及事务失败回滚。数据库及规则证据不能替代真实手机交互。
+- Lint 0 errors／12 warnings／0 hints，仍为此前 10 项 SDK／工具／依赖版本建议、图标 v26 冗余及 KAPT 可迁 KSP 建议，未新增 Room 关系索引警告。KAPT 单测未识别处理选项告警仍保留；没有关闭 lint、删必需检查或更换栈。
+- 新构建导出的 schema 2 与已提交实际 v2 JSON **逐字节一致**，10 张表，identityHash `68d5a95280efbc1998d259938b4a515e`；本轮无实体 DDL 变化和新迁移，v1／v2 文件均未修改。
+- APK：`0.2.2-trial`／versionCode `3`，`com.classher.timetable`，`debug`，12,386,788 bytes，实际来源为 299375f。SHA-256 `0371756dbc6d4172355d041a92b51b3c0691dc94e7700477037daf7c4ab58bad`。云端完整签名校验通过；下载 APK v2 公开证书元数据匹配稳定指纹 `0772965c1f74eb3ed73e486429e81f8d6985206d3cb2d609c444daa090931e0e`，与前两版相同。
+- [APK artifact 11386715805](https://github.com/zfy06011/class-her-rewrite/actions/runs/37404733372/artifacts/11386715805)，[诊断 artifact 11386800691](https://github.com/zfy06011/class-her-rewrite/actions/runs/37404733372/artifacts/11386800691)，预计北京时间 2026-10-20 10:36 到期。APK ZIP digest `a203e756a8a12b06b0784faf1002c23ef27d3944fdbd035d15fca1bd2b61012f`、诊断 ZIP digest `c55212ecb83b1e3cf77466fa3a759ecb81b88951aa086ff6a0144e0d5be3d7fa` 与本地 ZIP SHA-256 一致；provenance 中来源、版本、包名、变体、APK 哈希和证书指纹均匹配。
+- 本地 `.verify-tmp/ci-37404733372/ClassHer-0.2.2-trial-299375f-debug.apk`，同目录保存 ZIP／报告／provenance，不提交产物或临时下载 URL。可覆盖安装此前正式试用包；手机覆盖升级仍待确认。
+- 核心试用：① 覆盖安装，检查原课程／颜色还在；② 点周课表某次课程，把这次跨周调到同学期另一日，检查原日期标记和其他周不变；③ 将另一次停课，关闭／清理应用重开，从“我的 → 单次调整”撤销，检查恢复当前常规课表。无需完整课表或系统版本。
+- 检查结论：可交付本次候选 APK。真实单次操作／重启、学校服务失效／6 小时检查、字体缩放／深色以及后续业务仍未实测；整体 MVP 未完成。本轮结果记录只本地提交，未另行推送，后续文档 HEAD 不替代此 APK 的实际来源。
