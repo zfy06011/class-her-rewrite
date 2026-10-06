@@ -1,12 +1,12 @@
 # 双轨重写：当前任务交接
 
-更新：2026-10-06（0.2.3 已交付；实现学校更新核对 0.2.4，尚未云端验证；恢复代次机制已确认）。
+更新：2026-10-06（0.2.3 已交付；学校更新核对 0.2.4 首轮云端失败，JUnit 返回类型已修复，待新授权重建）。
 
 - 当前任务：首版个人课表 MVP；本轮补学校变化持久化、明确配对、字段合并与学校删除处理，保留来源、修改和例外。整体目标仍未完成。
 - 确认状态：沿用需求、原生技术栈与 AD-1～AD-12；用户已确认第 16.3 节处理决定并授权专用试用签名。用户另已确认无 ID 关联只自动匹配完全一致记录、其余手动配对。用户还确认：同学期配置完全一致、明确确认导入后可接入学校并保留所有手工课程与 UUID。继续原技术栈与 AD-1～AD-12，不提前实施跨存储恢复方案。每次推送仍需确认。
 - 当前执行者：Codex；已实测仓库读写、pwsh／Python／Node／Git，之前可读取 Actions 与下载产物。稳定签名在本机生成，Actions Secrets 通过 GitHub 页面保存并核对名称；没有安装或运行本地 JDK／Gradle／Android SDK。
 - 目标分支／本次 APK 来源：`work/android-probe`，实际来源为授权推送的 `a32bc2647ef66b15317eb956ffc6abe203411c5b`，远端 ref 一致。公开仓库 [zfy06011/class-her-rewrite](https://github.com/zfy06011/class-her-rewrite)。结果文档 HEAD 不代替此 APK SHA。
-- 进展：a32bc26 的 run `37406784519`／job `112086010051` success，92 tests／0 failures／0 ignored，lint 0 errors／12 warnings／0 hints；固定签名及 APK 产物核对通过，schema v2 逐字节一致。用户已确认第 21 节恢复代次机制，尚未实现；学校更新配对／合并已进入本轮实现但未云端验证，学期调整／备份和手机验收仍未完成。
+- 进展：0.2.4 的 run 37445566107 因新增测试返回类型使仓库测试类初始化失败，未生成 APK；已修复并保留实际 schema 3，待单独确认重推。0.2.3 的 a32bc26 run `37406784519`／job `112086010051` success，92 tests／0 failures／0 ignored，lint 0 errors／12 warnings／0 hints；固定签名及 APK 产物核对通过，schema v2 逐字节一致。用户已确认第 21 节恢复代次机制，尚未实现；学校更新配对／合并已进入本轮实现但未云端验证，学期调整／备份和手机验收仍未完成。
 - 文档约定：本文件是唯一当前交接文档。第 8～15 节保留历史证据，当前状态以顶部与第 22 节为准。私人课表、会话、密钥及 APK 均不提交。
 
 ## 1. 已确认的首版需求
@@ -795,3 +795,18 @@ GitHub Actions 的第三方步骤固定到本轮 GitHub API 核对的提交 SHA�
 - 恢复隐藏前如有新的学校候选，先提示核对；公共写入入口同样拒绝直接恢复，确保恢复预览使用最新已确认学校内容。
 
 - 提交边界：本节功能代码、迁移、17 项新增相关测试、版本及本 HANDOFF；随下一次获准推送包含之前 193803c／a67b9d0 的 0.2.3 结果与恢复设计记录。无关素材、私人数据、签名配置及 APK 不暂存。检查结论：可提交本轮源代码进入云端验证，尚无已验证的 0.2.4 APK。
+
+
+### 0.2.4 本次授权推送（2026-10-06）
+
+- 用户回复“确认”，批准此前请求的 a861b47 及之前未推的 193803c／a67b9d0 文档。准确来源 a861b47e321583efc3452e906d9946f03f87420c 已推送到公开仓库 zfy06011/class-her-rewrite 的 work/android-probe，远端 ref 核对一致。授权只用于此来源，本结果记录不另行推送。
+- 已确认 [Run 37445566107](https://github.com/zfy06011/class-her-rewrite/actions/runs/37445566107) 为 push 来源 a861b47，当前 in_progress；继续同一 run，尚未声称 Android 测试、迁移、lint 或 0.2.4 APK 通过。
+
+
+### 0.2.4 首轮失败与修复
+
+- Run 37445566107／job 112209431499 最终 failure；源 a861b47 的主 Kotlin／Room 与单测 Kotlin 编译通过，已有 parser／学校请求检查通过。JUnit 报 `pendingReviewConfirmationRespectsGlobalWriteGate() should be void`，仓库测试类初始化失败，仓库 56 项未实际执行；报告计 54 tests／1 initialization failure，不能称 109 项通过。APK／签名步骤 skipped，没有生成 0.2.4 APK；lint 仅分析步骤出现，尚无本次完整 lint 通过证据。
+- 缺陷：新增并发用例以 checking.await() 结束，Kotlin 推断返回 CheckedSource。修复为显式 Unit 返回并断言获取结果，保留原测试逻辑及所有测试门槛；没有跳过用例。
+- 其他测试类报告确认 ScheduleMigrationTest 4 tests／0 failures／0 ignored（实际 v1／v2→v3），SchoolSnapshotCodecTest 2 tests／0 failures／0 ignored。保留云端实际导出 schema 3：11 表，identityHash 83342d2c48ac8d796d26887aab4d8c07；schema 1／2 与已提交文件逐字节一致。导出来自 a861b47 的实际 Room 编译，修复只改测试，不改数据库结构。
+- 诊断 artifact 11402899112，ZIP SHA-256 f0368ab92c14eb075c4ebfa04cd2a0ef022866569f019952da0c3890c7e302cc 与元数据一致；本地 .verify-tmp/ci-37445566107/reports.zip，未提交私人数据或诊断 ZIP。
+- 下一次提交范围：单个测试返回类型修复、实际 schema 3 及本结果记录；版本仍 0.2.4-trial／code 5，需新授权推送后重跑全部 109 测试／lint／固定签名 APK。

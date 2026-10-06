@@ -694,7 +694,7 @@ class RoomScheduleRepositoryTest {
         database.openHelper.writableDatabase.execSQL("DROP TRIGGER reject_review")
         assertTrue(repository.confirmSchoolReview(request) is ReviewOutcome.Saved)
     }
-    @Test fun pendingReviewConfirmationRespectsGlobalWriteGate() = runBlocking {
+    @Test fun pendingReviewConfirmationRespectsGlobalWriteGate(): Unit = runBlocking {
         repository.confirmImport(plan)
         val saved = pending(source(meeting.copy(teacher = "新教师")))
         val request = reviewPlan(saved, mapOf(0 to saved.arrangements.single().id))
@@ -703,7 +703,8 @@ class RoomScheduleRepositoryTest {
         started.await()
         assertEquals(ReviewOutcome.Busy, repository.confirmSchoolReview(request))
         assertEquals(saved, repository.observeSchedules().first().single())
-        finish.complete(Unit); checking.await()
+        finish.complete(Unit)
+        assertTrue(checking.await().outcome is ImportOutcome.Saved)
     }
     @Test fun unknownOrFailedFetchKeepsPendingCandidateAndSuccessTime() = runBlocking {
         repository.confirmImport(plan)
