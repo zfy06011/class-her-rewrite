@@ -2,13 +2,15 @@ package com.classher.timetable
 
 import android.app.Application
 import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.view.View
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.Scaffold
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.unit.Density
@@ -43,6 +45,7 @@ class PixelScreensTest {
     @get:Rule val compose = createComposeRule()
     private var database: ScheduleDatabase? = null
     private val models = ViewModelStore()
+    private lateinit var host: View
     private val now = Instant.parse("2026-10-05T01:00:00Z")
     private val term = Term(LocalDate.parse("2026-09-14"), 19)
     private fun fixture(courses: List<Arrangement>) = SavedSchedule(UUID(0, 1), "2026 学年 · 第 1 学期",
@@ -52,6 +55,8 @@ class PixelScreensTest {
         Arrangement(UUID(1, index.toLong()), name, "合成教师", "示例楼 101", day, setOf(4), MeetingTime.Periods(periods))
     private fun frame(theme: ThemePreference = ThemePreference.LIGHT, scale: Float = 1f, page: Int = 0, content: @Composable () -> Unit) {
         compose.setContent {
+            val currentHost = LocalView.current
+            SideEffect { host = currentHost }
             ProbeTheme(theme) {
                 val density = LocalDensity.current
                 CompositionLocalProvider(LocalDensity provides Density(density.density, scale)) {
@@ -66,8 +71,17 @@ class PixelScreensTest {
     }
     private fun screenshot(name: String) {
         compose.waitForIdle()
-        val image = compose.onRoot().captureToImage().asAndroidBitmap()
+        // Robolectric has no frame-driven forceRedraw callback. Draw the actual Compose host
+        // synchronously on its UI thread using native Android graphics; do not substitute HTML.
+        val image = compose.runOnIdle {
+            assertTrue(host.isAttachedToWindow)
+            assertTrue(host.width >= 320 && host.height >= 600)
+            Bitmap.createBitmap(host.width, host.height, Bitmap.Config.ARGB_8888).also { host.draw(Canvas(it)) }
+        }
         assertTrue(image.width >= 320 && image.height >= 600)
+        val pixels = IntArray(image.width * image.height)
+        image.getPixels(pixels, 0, image.width, 0, 0, image.width, image.height)
+        assertTrue("Native Compose capture must contain rendered content", pixels.asSequence().filter { (it ushr 24) != 0 }.distinct().take(16).count() >= 16)
         val folder = File("build/ui-previews"); folder.mkdirs()
         File(folder, "$name.png").outputStream().use { assertTrue(image.compress(Bitmap.CompressFormat.PNG, 100, it)) }
     }
@@ -125,9 +139,11 @@ class PixelScreensTest {
         val saved = fixture(emptyList())
         val state = TimetableState(loading = false, schedules = listOf(saved), selectedId = saved.id, status = "合成试用课表保存在本机")
         var schoolOpened = false
-        compose.setContent { ProbeTheme(ThemePreference.LIGHT) {
-            TimetableApp(state, model, { schoolOpened = true }, {}, {}, {})
-        } }
+        compose.setContent {
+            val currentHost = LocalView.current
+            SideEffect { host = currentHost }
+            ProbeTheme(ThemePreference.LIGHT) { TimetableApp(state, model, { schoolOpened = true }, {}, {}, {}) }
+        }
         compose.onNodeWithText("学校导入").assertDoesNotExist()
         compose.onNodeWithText("我的", useUnmergedTree = true).performClick()
         compose.onNodeWithText("学校导入").assertIsDisplayed()

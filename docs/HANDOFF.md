@@ -1,12 +1,12 @@
 # 双轨重写：当前任务交接
 
-更新：2026-10-07（0.2.5 像素 UI 首轮编译失败，两处 Compose API 问题已修复；待新授权重推，0.2.4 仍为最近可交付 APK）。
+更新：2026-10-07（0.2.5 编译通过、原有 109 测试通过；五个原生抓图用例等待超时，测试 helper 已修复，待新授权重推）。
 
 - 当前任务：首版个人课表 MVP；本轮修复版本号显示并按用户截图更新原生 UI，学校导入／新增／检查等入口集中到我的。整体目标仍未完成。
 - 确认状态：沿用需求、原生技术栈与 AD-1～AD-12；用户已确认第 16.3 节处理决定并授权专用试用签名。用户另已确认无 ID 关联只自动匹配完全一致记录、其余手动配对。用户还确认：同学期配置完全一致、明确确认导入后可接入学校并保留所有手工课程与 UUID。继续原技术栈与 AD-1～AD-12，不提前实施跨存储恢复方案。每次推送仍需确认。
 - 当前执行者：Codex；已实测仓库读写、pwsh／Python／Node／Git，之前可读取 Actions 与下载产物。稳定签名在本机生成，Actions Secrets 通过 GitHub 页面保存并核对名称；没有安装或运行本地 JDK／Gradle／Android SDK。
 - 目标分支／本次 APK 来源：`work/android-probe`，实际来源为授权推送的 `d386c0ba79c5820fca5d79023b0e93ae93f4c72b`，远端 ref 一致。公开仓库 [zfy06011/class-her-rewrite](https://github.com/zfy06011/class-her-rewrite)。结果文档 HEAD 不代替此 APK SHA。
-- 进展：0.2.5 run 37593287292 因两处 Compose API 使用错误失败，尚无测试／截图／APK，单文件修复已完成，待新授权重推。最近已交付 d386c0b 的 run 37446230168／job 112211609686 success，109 tests／0 failures／0 ignored，lint 0 errors／12 warnings；学校核对写入、实际 v1／v2→3 迁移及固定签名 APK 通过。首次 JUnit 初始化失败已修复，没有跳过测试。手机真实学校更新、学期调整、可靠冷启动／6 小时自动检查、完整备份与恢复仍未完成。
+- 进展：0.2.5 run 37593731880 的 Kotlin 编译及原有 109 测试通过，五个 UI 用例因 captureToImage 等待绘制帧超时而失败，无新 APK；测试抓图 helper 已修复，待单独确认重推。最近可交付仍为 0.2.4／d386c0b，109 tests／0 failures；手机真实学校更新、学期调整、可靠冷启动／6 小时检查与完整备份仍未完成。
 - 文档约定：本文件是唯一当前交接文档。第 8～15 节保留历史证据，当前状态以顶部与第 22 节为准。私人课表、会话、密钥及 APK 均不提交。
 
 ## 1. 已确认的首版需求
@@ -858,3 +858,18 @@ GitHub Actions 的第三方步骤固定到本轮 GitHub API 核对的提交 SHA�
 - Run 37593287292／job 112699696994 failure，源 88392c9。既有 parser／学校请求检查通过，主 Kotlin 编译失败：PixelComponents.kt 的 withTransform 转换 lambda 没有 Density 接收器，不能隐式调用 Dp.toPx；semantics 中 role 扩展未导入。此次没有实际执行 114 个测试、原生截图或完整 lint，APK／证书步骤 skipped，不存在可交付 0.2.5 APK。
 - 本地修复：在外层 DrawScope 先计算阴影偏移 px，再传给 DrawTransform；补 androidx.compose.ui.semantics.role 导入。仅修复两个 API 使用位置，不改变视觉设计、功能范围、版本、依赖或检查门槛。43 个 Kotlin 文件本地语法检查通过，不冒充 Android 编译验证。
 - 待新授权：提交上述单文件修复与结果记录，重新推 work/android-probe 后运行既定 114 测试／lint／五张原生截图与稳定签名 0.2.5-trial。授权已消费于 88392c9，修复不自动沿用。
+
+
+### 0.2.5 修复授权重推
+
+- 用户回复“推送”，批准此前明确的 188ab5a 修复。准确来源 188ab5ab27a1c452c57ec77fb0170f34fc3259f1 已推到 zfy06011/class-her-rewrite 的 work/android-probe，远端一致。后续结果记录不随此授权自动推送。
+- [Run 37593731880](https://github.com/zfy06011/class-her-rewrite/actions/runs/37593731880) 已确认 push／188ab5a，目前 in_progress；继续跟进同一 run。
+
+
+### 0.2.5 第二轮：测试截图等待超时与修复
+
+- Run 37593731880／job 112701155101 failure，源 188ab5a。主 Kotlin／Room 编译和单测编译通过；114 tests／5 failures，5 个失败均为 PixelScreensTest.screenshot 中 captureToImage 的 WindowCapture.forceRedraw 2000ms 等待超时，报告没有 PNG。原有 109 项全部通过，仓库 56／0、迁移 4／0、候选 JSON 2／0。UI 截图之前的可见元素／目标大小／课程点击和版本入口断言没有报错，不能因此称整套 UI 测试或视觉验证已通过；实际 App 测试的截图之后步骤尚未执行。APK／证书 skipped，完整 lint 通过仍无证据。
+- 诊断 artifact 11470535036，ZIP SHA-256 08ace8c9e9895eb11185fa612c0fc5f55dfab4e5a24fbbbe04673b0858adb76d 与元数据一致，本地 .verify-tmp/ci-37593731880/reports.zip。
+- 定位依据：自身失败栈为 WindowCapture.forceRedraw→captureRegionToImage→captureToImage，与 Robolectric 上游报告 #8071 同类；不以单个旧 issue 宣称当前环境已解决。官方 Android View.draw(Canvas) 可同步绘制视图，本轮只调整测试 helper：记住真实 Compose 的 LocalView，在测试 UI 线程用 native graphics 同步画到 ARGB Bitmap，再压 PNG；新增截图尺寸／附着状态和 ≥16 非透明颜色检查，防止空白图冒充截图。全部 5 个 UI 用例及断言保留，不跳过、不减少检查门槛，不更换业务／视觉／依赖。
+- 新方法仍是实际 Android View／Compose 绘制，非网页重绘，也非真实手机硬件 PixelCopy；原生截图是否完整和参考一致仍须下次云端运行及人工检查证明。参考：https://github.com/robolectric/robolectric/issues/8071 ，https://developer.android.com/reference/android/view/View#draw(android.graphics.Canvas) 。
+- 本地 43 个 Kotlin 语法检查通过。待单文件测试 helper 修复及本记录提交，经新授权重推后重跑 114 测试、五张 PNG、lint 和固定签名 0.2.5-trial。
