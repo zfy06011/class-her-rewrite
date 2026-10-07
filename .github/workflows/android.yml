@@ -108,6 +108,7 @@ jobs:
           name: android-checks-${{ steps.source.outputs.sha }}
           path: |
             app/build/reports/
+            app/build/ui-previews/
             app/schemas/
           if-no-files-found: ignore
           retention-days: 14

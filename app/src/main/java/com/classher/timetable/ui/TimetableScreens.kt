@@ -1,7 +1,8 @@
 package com.classher.timetable.ui
 
 import androidx.activity.compose.BackHandler
-import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.layout.Arrangement as LayoutArrangement
@@ -16,11 +17,10 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import com.classher.timetable.R
+import com.classher.timetable.BuildConfig
 import com.classher.timetable.domain.*
 import kotlinx.coroutines.delay
 import java.time.DayOfWeek
@@ -28,7 +28,6 @@ import java.time.Instant
 import java.time.LocalDate
 import java.time.LocalTime
 import java.time.format.DateTimeFormatter
-import java.time.temporal.ChronoUnit
 import java.time.temporal.TemporalAdjusters
 import java.util.UUID
 
@@ -70,43 +69,40 @@ fun TimetableApp(state: TimetableState, model: TimetableViewModel, openSchool: (
         return
     }
     BackHandler(importing) { if (!state.saving) importing = false }
-    Scaffold(bottomBar = { if (!importing) NavigationBar {
-        listOf("首页", "课表", "我的").forEachIndexed { index, label ->
-            NavigationBarItem(selected = page == index, onClick = { page = index },
-                icon = { Text(listOf("日", "周", "我")[index], style = MaterialTheme.typography.titleSmall) }, label = { Text(label) })
-        }
-    } }) { insets ->
-        Column(Modifier.fillMaxSize().padding(insets)) {
-            Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp), horizontalArrangement = LayoutArrangement.SpaceBetween) {
-                Column(Modifier.weight(1f)) {
-                    Text(if (importing) "确认导入" else "双轨", style = MaterialTheme.typography.headlineMedium)
-                    Text(if (importing) "把学校课表收进自己的手账" else "今天也按自己的节奏", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    PaperBackground(Modifier.fillMaxSize()) {
+        Scaffold(containerColor = androidx.compose.ui.graphics.Color.Transparent,
+            bottomBar = { if (!importing) PixelNavigation(page) { page = it } }) { insets ->
+            Column(Modifier.fillMaxSize().padding(insets)) {
+                if (importing) Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                    Text("确认导入", Modifier.weight(1f), style = MaterialTheme.typography.headlineSmall)
+                    TextButton(onClick = { importing = false }, enabled = !state.saving) { Text("返回我的") }
+                } else PixelBrand()
+                if (!importing && page != 2 && state.selected?.schoolReview != null) {
+                    Text("学校更新待核对，请到“我的”处理。", Modifier.padding(horizontal = 16.dp, vertical = 4.dp), style = MaterialTheme.typography.bodySmall)
                 }
-                if (importing) TextButton(onClick = { importing = false }, enabled = !state.saving) { Text("返回") }
-                else {
-                    if (state.selected != null) TextButton(onClick = { detailId = null; model.openEditor(null) }, enabled = !state.busy) { Text("新增") }
-                    TextButton(onClick = { importing = true }) { Text("学校导入") }
+                if (!importing && page != 2 && state.status.contains("请登录学校")) {
+                    Text("需重新登录学校，可继续查看课表。", Modifier.padding(horizontal = 16.dp, vertical = 4.dp), style = MaterialTheme.typography.bodySmall)
                 }
-            }
-            when {
-                state.loading -> { LinearProgressIndicator(Modifier.fillMaxWidth()); Text("正在读取本地课表…", Modifier.padding(16.dp)) }
-                state.loadFailed -> {
-                    Text(state.status, Modifier.padding(16.dp), color = MaterialTheme.colorScheme.error)
-                    Button(onClick = model::load, modifier = Modifier.padding(16.dp)) { Text("重试读取") }
-                }
-                importing -> ImportScreen(state, model, openSchool, fetch, logout)
-                else -> {
-                    if (state.schedules.size > 1) Row(Modifier.horizontalScroll(rememberScrollState()).padding(horizontal = 16.dp), horizontalArrangement = LayoutArrangement.spacedBy(8.dp)) {
-                        state.schedules.forEach { term -> FilterChip(selected = state.selected?.id == term.id, onClick = { model.selectTerm(term.id) },
-                            enabled = !state.busy, label = { Text(term.title) }) }
+                when {
+                    state.loading -> { LinearProgressIndicator(Modifier.fillMaxWidth()); Text("正在读取本地课表…", Modifier.padding(16.dp)) }
+                    state.loadFailed -> {
+                        Text(state.status, Modifier.padding(16.dp), color = MaterialTheme.colorScheme.error)
+                        Button(onClick = model::load, modifier = Modifier.padding(16.dp)) { Text("重试读取") }
                     }
-                    val selected = state.selected
-                    if (state.busy) LinearProgressIndicator(Modifier.fillMaxWidth())
-                    if (selected == null && page != 2) EmptySchedule(onImport = { importing = true }, onManual = model::openManualTerm)
-                    else when (page) {
-                        0 -> selected?.let { TodayScreen(it, state.status) { course -> detailId = course.arrangementId; detailOriginalDate = course.originalDate } }
-                        1 -> selected?.let { WeekScreen(it) { course -> detailId = course.arrangementId; detailOriginalDate = course.originalDate } }
-                        2 -> SettingsScreen(state, model, { importing = true }, checkUpdates)
+                    importing -> ImportScreen(state, model, openSchool, fetch, logout)
+                    else -> {
+                        if (state.schedules.size > 1) Row(Modifier.horizontalScroll(rememberScrollState()).padding(horizontal = 16.dp), horizontalArrangement = LayoutArrangement.spacedBy(8.dp)) {
+                            state.schedules.forEach { term -> FilterChip(selected = state.selected?.id == term.id, onClick = { model.selectTerm(term.id) },
+                                enabled = !state.busy, label = { Text(term.title) }) }
+                        }
+                        if (state.busy) LinearProgressIndicator(Modifier.fillMaxWidth())
+                        Box(Modifier.weight(1f).fillMaxWidth()) {
+                            when (page) {
+                                0 -> TodayScreen(state.selected) { course -> detailId = course.arrangementId; detailOriginalDate = course.originalDate }
+                                1 -> WeekScreen(state.selected) { course -> detailId = course.arrangementId; detailOriginalDate = course.originalDate }
+                                2 -> SettingsScreen(state, model, { importing = true }, checkUpdates, logout)
+                            }
+                        }
                     }
                 }
             }
@@ -145,56 +141,82 @@ fun TimetableApp(state: TimetableState, model: TimetableViewModel, openSchool: (
 }
 
 @Composable
-private fun EmptySchedule(onImport: () -> Unit, onManual: () -> Unit) {
-    Column(Modifier.verticalScroll(rememberScrollState()).padding(32.dp), verticalArrangement = LayoutArrangement.spacedBy(16.dp)) {
-        Image(painterResource(R.drawable.ic_launcher_foreground), contentDescription = null, modifier = Modifier.size(96.dp))
-        Text("新学期，从一张课表开始", style = MaterialTheme.typography.headlineSmall)
-        Text("登录学校并确认导入。保存后，即使没有网络也能查看。", color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Button(onClick = onImport) { Text("导入学校课表") }
-        OutlinedButton(onClick = onManual) { Text("离线手工录课") }
+private fun TodayScreen(saved: SavedSchedule?, onCourse: (Occurrence) -> Unit) {
+    var now by remember { mutableStateOf(Instant.now()) }
+    LaunchedEffect(saved?.id) { while (true) { now = Instant.now(); delay(30_000) } }
+    PixelHomeContent(saved, now, onCourse)
+}
+
+@Composable
+internal fun PixelHomeContent(saved: SavedSchedule?, now: Instant, onCourse: (Occurrence) -> Unit) {
+    val all = remember(saved) { saved?.let { occurrences(it.term, it.arrangements, it.exceptions, it.periods) }.orEmpty() }
+    val summary = saved?.let { summarizeToday(it.term, all, now) }
+    val date = now.atZone(SchoolZone).toLocalDate()
+    val semesterTitle = saved?.let { "${it.academicYear} 学年 · 第 ${it.semester.toInt() + 1} 学期" }.orEmpty()
+    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 20.dp), verticalArrangement = LayoutArrangement.spacedBy(20.dp)) {
+        item {
+            Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically, horizontalArrangement = LayoutArrangement.spacedBy(12.dp)) {
+                PixelIcon(PixelGlyph.CALENDAR, Modifier.size(32.dp))
+                Column(Modifier.weight(1f)) {
+                    Text("${date.monthValue} 月 ${date.dayOfMonth} 日 · 星期${dayNames[date.dayOfWeek.value - 1]}", style = MaterialTheme.typography.headlineLarge)
+                    PixelRule(Modifier.fillMaxWidth().padding(vertical = 4.dp))
+                    Text(summary?.teachingWeek?.let { "第 $it 教学周 · $semesterTitle" }
+                        ?: if (saved == null) "还没有建立学期" else "当前日期不在此学期", style = MaterialTheme.typography.bodySmall)
+                }
+            }
+        }
+        item { NextLessonPanel(summary) }
+        item {
+            Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically, horizontalArrangement = LayoutArrangement.spacedBy(12.dp)) {
+                PixelIcon(PixelGlyph.LIST, Modifier.size(28.dp)); Text("今日课程", style = MaterialTheme.typography.headlineSmall)
+                PixelRule(Modifier.weight(1f))
+            }
+        }
+        if (summary?.entries.isNullOrEmpty()) item { EmptyToday(saved != null) }
+        else items(requireNotNull(summary).entries, key = { "${it.occurrence.arrangementId}:${it.occurrence.originalDate}" }) { entry ->
+            CourseCard(entry.occurrence, entry.ended, entry.conflicting, saved?.colors?.get(entry.occurrence.arrangementId) ?: CourseColor.PINK) { onCourse(entry.occurrence) }
+        }
     }
 }
 
 @Composable
-private fun TodayScreen(saved: SavedSchedule, status: String, onCourse: (Occurrence) -> Unit) {
-    var now by remember { mutableStateOf(Instant.now()) }
-    LaunchedEffect(saved.id) { while (true) { now = Instant.now(); delay(30_000) } }
-    val all = remember(saved) { occurrences(saved.term, saved.arrangements, saved.exceptions, saved.periods) }
-    val summary = remember(all, now) { summarizeToday(saved.term, all, now) }
-    LazyColumn(contentPadding = PaddingValues(16.dp), verticalArrangement = LayoutArrangement.spacedBy(12.dp)) {
-        item {
-            Text("${summary.date.monthValue} 月 ${summary.date.dayOfMonth} 日 · 星期${dayNames[summary.date.dayOfWeek.value - 1]}", style = MaterialTheme.typography.titleLarge)
-            Text(summary.teachingWeek?.let { "第 $it 教学周 · ${saved.title}" } ?: "当前日期不在此学期", style = MaterialTheme.typography.bodySmall)
-        }
-        item {
-            Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)) {
-                Column(Modifier.padding(20.dp), verticalArrangement = LayoutArrangement.spacedBy(8.dp)) {
-                    val running = summary.running.firstOrNull()
-                    val next = summary.next
-                    Text(if (running != null) "正在上课" else "下一节课", style = MaterialTheme.typography.labelLarge)
-                    Text(running?.occurrence?.name ?: next?.segment?.occurrence?.name ?: "本学期没有后续课程", style = MaterialTheme.typography.titleLarge)
-                    if (running != null) Text(times(listOf(running.range)))
-                    else if (next != null) {
-                        Text("${next.segment.occurrence.date} · ${times(listOf(next.segment.range))}")
-                        val minutes = next.untilStart.toMinutes().coerceAtLeast(0)
-                        Text(if (minutes < 60) "${minutes.coerceAtLeast(1)} 分钟后" else "${minutes / 60} 小时 ${minutes % 60} 分钟后", style = MaterialTheme.typography.labelLarge)
-                    }
+private fun NextLessonPanel(summary: TodaySummary?) {
+    val running = summary?.running?.firstOrNull(); val next = summary?.next
+    PixelPanel(Modifier.fillMaxWidth(), LocalCourseColors.current[1]) {
+        Column {
+            Row(Modifier.fillMaxWidth().background(LocalCourseColors.current[1].copy(alpha = .8f)).padding(horizontal = 16.dp, vertical = 8.dp),
+                verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                Text("▶  ${if (running != null) "正在上课" else "下一节课"}", Modifier.weight(1f), style = MaterialTheme.typography.titleMedium)
+                listOf(2, 0, 3).forEach { index -> Box(Modifier.padding(start = 6.dp).size(10.dp).background(LocalCourseColors.current[index])
+                    .border(1.dp, LocalPaperColors.current.ink)) }
+            }
+            Row(Modifier.padding(16.dp), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically, horizontalArrangement = LayoutArrangement.spacedBy(16.dp)) {
+                PixelBookStack(Modifier.size(56.dp))
+                PixelVerticalRule(Modifier.height(80.dp))
+                Column(Modifier.weight(1f), verticalArrangement = LayoutArrangement.spacedBy(8.dp)) {
+                    Text(running?.occurrence?.name ?: next?.segment?.occurrence?.name ?: if (summary == null) "新学期，从一张课表开始" else "本学期没有后续课程",
+                        style = MaterialTheme.typography.titleLarge, maxLines = 3, overflow = TextOverflow.Ellipsis)
+                    PixelRule(Modifier.fillMaxWidth(), MaterialTheme.colorScheme.onSurfaceVariant)
+                    val lesson = running ?: next?.segment
+                    if (lesson != null) {
+                        Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically, horizontalArrangement = LayoutArrangement.spacedBy(8.dp)) {
+                            PixelIcon(PixelGlyph.CLOCK, Modifier.size(18.dp)); Text("${lesson.occurrence.date} · ${times(listOf(lesson.range))}", style = MaterialTheme.typography.bodySmall)
+                        }
+                        if (running == null && next != null) Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically, horizontalArrangement = LayoutArrangement.spacedBy(8.dp)) {
+                            PixelIcon(PixelGlyph.HOURGLASS, Modifier.size(18.dp))
+                            val minutes = next.untilStart.toMinutes().coerceAtLeast(1)
+                            Text(if (minutes < 60) "$minutes 分钟后" else "${minutes / 60} 小时 ${minutes % 60} 分钟后", style = MaterialTheme.typography.bodyMedium)
+                        }
+                    } else Text(if (summary == null) "到“我的”录课或导入学校课表" else "留一点空白，按自己的节奏。", style = MaterialTheme.typography.bodySmall)
                 }
             }
         }
-        item { Text("今日课程", style = MaterialTheme.typography.titleMedium) }
-        if (summary.entries.isEmpty()) item { Text("今天没有课程，好好安排自己的时间。", Modifier.padding(vertical = 12.dp), color = MaterialTheme.colorScheme.onSurfaceVariant) }
-        items(summary.entries, key = { "${it.occurrence.arrangementId}:${it.occurrence.originalDate}" }) { entry ->
-            CourseCard(entry.occurrence, entry.ended, entry.conflicting, saved.colors[entry.occurrence.arrangementId] ?: CourseColor.PINK) { onCourse(entry.occurrence) }
-        }
-        item { Text(status, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
     }
 }
 
 @Composable
 private fun CourseCard(course: Occurrence, ended: Boolean, conflict: Boolean, color: CourseColor, click: () -> Unit) {
-    Card(onClick = click, modifier = Modifier.fillMaxWidth().alpha(if (ended) 0.65f else 1f),
-        colors = CardDefaults.cardColors(containerColor = LocalCourseColors.current[color.ordinal], contentColor = MaterialTheme.colorScheme.onSurface)) {
+    PixelPanel(onClick = click, modifier = Modifier.fillMaxWidth().alpha(if (ended) 0.65f else 1f), color = LocalCourseColors.current[color.ordinal]) {
         Column(Modifier.padding(16.dp), verticalArrangement = LayoutArrangement.spacedBy(4.dp)) {
             Text(times(course.ranges), style = MaterialTheme.typography.labelLarge)
             Text(course.name, style = MaterialTheme.typography.titleMedium)
@@ -207,79 +229,20 @@ private fun CourseCard(course: Occurrence, ended: Boolean, conflict: Boolean, co
 }
 
 @Composable
-private fun WeekScreen(saved: SavedSchedule, onCourse: (Occurrence) -> Unit) {
-    var week by rememberSaveable(saved.id.toString()) { mutableIntStateOf(saved.term.weekOf(LocalDate.now(SchoolZone)) ?: 1) }
-    val all = remember(saved) { occurrences(saved.term, saved.arrangements, saved.exceptions, saved.periods) }
-    val monday = saved.term.dateOf(week, 1)
-    val visible = all.filter { it.date in monday..monday.plusDays(6) }
-    Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), horizontalArrangement = LayoutArrangement.SpaceBetween) {
-        TextButton(onClick = { week-- }, enabled = week > 1) { Text("上一周") }
-        Column { Text("第 $week 教学周", style = MaterialTheme.typography.titleMedium); Text("$monday", style = MaterialTheme.typography.bodySmall) }
-        TextButton(onClick = { week++ }, enabled = week < saved.term.weekCount) { Text("下一周") }
-    }
-    Text("左右滑动查看周末 · 点课程查看详情", Modifier.padding(horizontal = 16.dp, vertical = 8.dp), style = MaterialTheme.typography.bodySmall)
-    val start = (saved.periods.values.map { it.start } + visible.flatMap { it.ranges.map { range -> range.start } }).min().toSecondOfDay() / 60
-    val end = (saved.periods.values.map { it.end } + visible.flatMap { it.ranges.map { range -> range.end } }).max().toSecondOfDay() / 60
-    val minuteScale = 1.2f
-    val dailyLanes = (1..7).map { day ->
-        val segments = visible.filter { it.date.dayOfWeek.value == day }.flatMap { course -> course.ranges.map { LessonSegment(course, it) } }
-            .sortedWith(compareBy({ it.range.start }, { it.range.end }, { it.occurrence.arrangementId.toString() }))
-        val lanes = mutableListOf<MutableList<LessonSegment>>()
-        segments.forEach { segment ->
-            val lane = lanes.firstOrNull { entries -> entries.none { entry ->
-                val entryStart = entry.range.start.toSecondOfDay() / 60f
-                val entryEnd = maxOf(entry.range.end.toSecondOfDay() / 60f, entryStart + 52f / minuteScale)
-                val segmentStart = segment.range.start.toSecondOfDay() / 60f
-                val segmentEnd = maxOf(segment.range.end.toSecondOfDay() / 60f, segmentStart + 52f / minuteScale)
-                entryStart < segmentEnd && segmentStart < entryEnd
-            } }
-                ?: mutableListOf<LessonSegment>().also { lanes.add(it) }
-            lane.add(segment)
-        }
-        lanes
-    }
-    val dayWidths = dailyLanes.map { (it.size * 80f).coerceAtLeast(144f) }
-    Column(Modifier.horizontalScroll(rememberScrollState()).verticalScroll(rememberScrollState())) {
-        Row {
-            Spacer(Modifier.width(56.dp))
-            for (day in 1..7) Column(Modifier.width(dayWidths[day - 1].dp).padding(8.dp)) {
-                Text("星期${dayNames[day - 1]}", style = MaterialTheme.typography.titleSmall)
-                Text("${monday.plusDays((day - 1).toLong()).dayOfMonth} 日", style = MaterialTheme.typography.bodySmall)
-            }
-        }
-        Row {
-            Box(Modifier.width(56.dp).height(((end - start) * minuteScale + 64).dp)) {
-                saved.periods.toSortedMap().forEach { (number, range) ->
-                    Column(Modifier.offset(y = ((range.start.toSecondOfDay() / 60 - start) * minuteScale).dp).padding(start = 8.dp)) {
-                        Text("$number", style = MaterialTheme.typography.labelLarge)
-                        Text(range.start.format(clockFormat), style = MaterialTheme.typography.labelSmall)
-                    }
-                }
-            }
-            for (day in 1..7) {
-                val lanes = dailyLanes[day - 1]
-                val width = dayWidths[day - 1] / lanes.size.coerceAtLeast(1)
-                Box(Modifier.width(dayWidths[day - 1].dp).height(((end - start) * minuteScale + 64).dp)) {
-                    saved.periods.values.forEach { range -> HorizontalDivider(Modifier.offset(y = ((range.start.toSecondOfDay() / 60 - start) * minuteScale).dp)) }
-                    lanes.forEachIndexed { index, lane -> lane.forEach { segment ->
-                        Card(onClick = { onCourse(segment.occurrence) },
-                            modifier = Modifier.offset(x = (index * width).dp, y = ((segment.range.start.toSecondOfDay() / 60 - start) * minuteScale).dp)
-                                .width(width.dp).height((ChronoUnit.MINUTES.between(segment.range.start, segment.range.end).toInt() * minuteScale).coerceAtLeast(52f).dp).padding(2.dp),
-                            colors = CardDefaults.cardColors(containerColor = LocalCourseColors.current[(saved.colors[segment.occurrence.arrangementId] ?: CourseColor.PINK).ordinal], contentColor = MaterialTheme.colorScheme.onSurface)) {
-                            Column(Modifier.padding(6.dp)) {
-                                Text(segment.occurrence.name, style = MaterialTheme.typography.labelLarge, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                                Text(if (segment.occurrence.adjusted) "调课 · ${segment.occurrence.room.ifBlank { "地点未填" }}" else segment.occurrence.room.ifBlank { "地点未提供" }, style = MaterialTheme.typography.labelSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                            }
-                        }
-                    } }
-                }
-            }
-        }
-    }
+internal fun AppVersionFooter() {
+    var licenseOpen by remember { mutableStateOf(false) }
+    val context = androidx.compose.ui.platform.LocalContext.current
+    Text("${BuildConfig.VERSION_NAME} · code ${BuildConfig.VERSION_CODE} · 课程保存在此设备", style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant)
+    TextButton(onClick = { licenseOpen = true }) { Text("Fusion Pixel 字体 · 开源许可", style = MaterialTheme.typography.labelSmall) }
+    if (licenseOpen) AlertDialog(onDismissRequest = { licenseOpen = false }, title = { Text("字体许可") }, text = {
+        val license = remember { context.assets.open("licenses/FusionPixel-LICENSES.txt").bufferedReader().use { it.readText() } }
+        Text(license, Modifier.verticalScroll(rememberScrollState()), style = MaterialTheme.typography.bodySmall)
+    }, confirmButton = { TextButton(onClick = { licenseOpen = false }) { Text("完成") } })
 }
 
 @Composable
-private fun SettingsScreen(state: TimetableState, model: TimetableViewModel, onImport: () -> Unit, fetch: () -> Unit) {
+private fun SettingsScreen(state: TimetableState, model: TimetableViewModel, onImport: () -> Unit, fetch: () -> Unit, logout: () -> Unit) {
     var showCourses by rememberSaveable(state.selected?.id?.toString()) { mutableStateOf(false) }
     LazyColumn(contentPadding = PaddingValues(16.dp), verticalArrangement = LayoutArrangement.spacedBy(16.dp)) {
         item {
@@ -289,11 +252,16 @@ private fun SettingsScreen(state: TimetableState, model: TimetableViewModel, onI
         }
         item {
             Row(horizontalArrangement = LayoutArrangement.spacedBy(8.dp)) {
-                Button(onClick = onImport) { Text("学校导入") }
-                OutlinedButton(onClick = fetch, enabled = !state.busy && state.selected?.scope != null) { Text("立即检查更新") }
+                PixelAction("新增", PixelGlyph.PLUS, LocalCourseColors.current[3], !state.busy,
+                    { if (state.selected == null) model.openManualTerm() else model.openEditor(null) }, Modifier.weight(1f))
+                PixelAction("学校导入", PixelGlyph.SCHOOL, LocalCourseColors.current[0], !state.busy, onImport, Modifier.weight(1f))
             }
             state.selected?.lastSuccessfulCheck?.let { Text("上次成功检查：${it.atZone(SchoolZone).format(DateTimeFormatter.ofPattern("MM-dd HH:mm"))}", style = MaterialTheme.typography.bodySmall) }
-            OutlinedButton(onClick = model::openManualTerm, enabled = !state.busy) { Text("新建手工学期") }
+            Row(horizontalArrangement = LayoutArrangement.spacedBy(8.dp)) {
+                OutlinedButton(onClick = fetch, enabled = !state.busy && state.selected?.scope != null, modifier = Modifier.weight(1f)) { Text("立即检查更新") }
+                OutlinedButton(onClick = model::openManualTerm, enabled = !state.busy, modifier = Modifier.weight(1f)) { Text("新建手工学期") }
+            }
+            TextButton(onClick = logout, enabled = !state.busy) { Text("退出学校会话，保留课表") }
         }
         item {
             Text("外观", style = MaterialTheme.typography.titleMedium)
@@ -357,7 +325,7 @@ private fun SettingsScreen(state: TimetableState, model: TimetableViewModel, onI
                 } }
             }
         }
-        item { Text("0.2.3 试用 · 课程保存在此设备", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+        item { AppVersionFooter() }
     }
 }
 

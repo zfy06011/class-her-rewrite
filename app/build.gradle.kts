@@ -21,10 +21,10 @@ android {
         applicationId = "com.classher.timetable"
         minSdk = 26
         targetSdk = 36
-        versionCode = 5
-        versionName = "0.2.4-trial"
+        versionCode = 6
+        versionName = "0.2.5-trial"
     }
-    buildFeatures { compose = true }
+    buildFeatures { compose = true; buildConfig = true }
     sourceSets.getByName("test").resources.srcDir("schemas")
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
@@ -84,4 +84,7 @@ dependencies {
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.robolectric:robolectric:4.17")
     testImplementation("androidx.test:core:1.7.0")
+    testImplementation(platform("androidx.compose:compose-bom:2025.10.01"))
+    testImplementation("androidx.compose.ui:ui-test-junit4")
+    debugImplementation("androidx.compose.ui:ui-test-manifest")
 }
