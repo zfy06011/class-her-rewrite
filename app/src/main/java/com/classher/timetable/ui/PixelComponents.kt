@@ -17,6 +17,7 @@ import androidx.compose.ui.graphics.*
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.withTransform
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.disabled
 import androidx.compose.ui.text.font.FontWeight
@@ -53,7 +54,8 @@ internal fun PixelPanel(modifier: Modifier = Modifier, color: Color = MaterialTh
     val palette = LocalPaperColors.current; val shape = PixelShape()
     val decorated = if (!shadow) modifier else modifier.drawBehind {
         val path = (shape.createOutline(size, layoutDirection, this) as Outline.Generic).path
-        withTransform({ translate(4.dp.toPx(), 5.dp.toPx()) }) { drawPath(path, palette.shadow.copy(alpha = .4f)) }
+        val shadowX = 4.dp.toPx(); val shadowY = 5.dp.toPx()
+        withTransform({ translate(shadowX, shadowY) }) { drawPath(path, palette.shadow.copy(alpha = .4f)) }
     }
     if (onClick == null) Surface(modifier = decorated, color = color, contentColor = MaterialTheme.colorScheme.onSurface,
         shape = shape, border = BorderStroke(1.5.dp, palette.ink), content = content)

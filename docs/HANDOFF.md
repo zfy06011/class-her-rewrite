@@ -1,12 +1,12 @@
 # 双轨重写：当前任务交接
 
-更新：2026-10-07（0.2.4 已交付；用户反馈版本文案错误，明确要求按两张像素参考图更新首页／周表并迁移操作入口）。
+更新：2026-10-07（0.2.5 像素 UI 首轮编译失败，两处 Compose API 问题已修复；待新授权重推，0.2.4 仍为最近可交付 APK）。
 
 - 当前任务：首版个人课表 MVP；本轮修复版本号显示并按用户截图更新原生 UI，学校导入／新增／检查等入口集中到我的。整体目标仍未完成。
 - 确认状态：沿用需求、原生技术栈与 AD-1～AD-12；用户已确认第 16.3 节处理决定并授权专用试用签名。用户另已确认无 ID 关联只自动匹配完全一致记录、其余手动配对。用户还确认：同学期配置完全一致、明确确认导入后可接入学校并保留所有手工课程与 UUID。继续原技术栈与 AD-1～AD-12，不提前实施跨存储恢复方案。每次推送仍需确认。
 - 当前执行者：Codex；已实测仓库读写、pwsh／Python／Node／Git，之前可读取 Actions 与下载产物。稳定签名在本机生成，Actions Secrets 通过 GitHub 页面保存并核对名称；没有安装或运行本地 JDK／Gradle／Android SDK。
 - 目标分支／本次 APK 来源：`work/android-probe`，实际来源为授权推送的 `d386c0ba79c5820fca5d79023b0e93ae93f4c72b`，远端 ref 一致。公开仓库 [zfy06011/class-her-rewrite](https://github.com/zfy06011/class-her-rewrite)。结果文档 HEAD 不代替此 APK SHA。
-- 进展：d386c0b 的 run 37446230168／job 112211609686 success，109 tests／0 failures／0 ignored，lint 0 errors／12 warnings；学校核对写入、实际 v1／v2→3 迁移及固定签名 APK 通过。首次 JUnit 初始化失败已修复，没有跳过测试。手机真实学校更新、学期调整、可靠冷启动／6 小时自动检查、完整备份与恢复仍未完成。
+- 进展：0.2.5 run 37593287292 因两处 Compose API 使用错误失败，尚无测试／截图／APK，单文件修复已完成，待新授权重推。最近已交付 d386c0b 的 run 37446230168／job 112211609686 success，109 tests／0 failures／0 ignored，lint 0 errors／12 warnings；学校核对写入、实际 v1／v2→3 迁移及固定签名 APK 通过。首次 JUnit 初始化失败已修复，没有跳过测试。手机真实学校更新、学期调整、可靠冷启动／6 小时自动检查、完整备份与恢复仍未完成。
 - 文档约定：本文件是唯一当前交接文档。第 8～15 节保留历史证据，当前状态以顶部与第 22 节为准。私人课表、会话、密钥及 APK 均不提交。
 
 ## 1. 已确认的首版需求
@@ -845,3 +845,16 @@ GitHub Actions 的第三方步骤固定到本轮 GitHub API 核对的提交 SHA�
 - 检查／审查修正：本地 43 个 Kotlin 文件 tree-sitter 语法检查通过。设计审查修正了下一节图标与参考不符（改为蓝粉叠书＋纵向虚线）、周表留白点击区不足（外层完整 ≥48dp 命中区）、短卡地点易裁切（最低卡高与文字密度调整）、暗色装饰对比和未登录／待核对提示；绘制和字体统一主题，用户参考优先于技能的通用单色／圆角建议。没有宣称已达像素一致或视觉评分通过，仍需实际截图审查。
 - 新增 5 项原生 UI 渲染／交互测试，合计 114 项；沿用 Robolectric，加同版 Compose BOM 的 ui-test-junit4 和 debug ui-test-manifest，仅为现有原生测试提供宿主，不换框架。截图输出 app/build/ui-previews，随既有诊断 artifact 上传。测试覆盖首页无课下一节的真实日期、深色长标题／大字、七天和课程点击原日期、重叠／非连续节次不丢段、实际 App 导入入口仅在我的及 BuildConfig 版本、进入导入后返回。
 - 未检查：Android 编译、114 项单测、原生渲染截图、lint、新签名 APK 和手机体验尚未运行；评分／图片一致性只能在截图生成后判断。因每次推送需确认，本地实现和提交完成后将请求推送并运行这些检查；不将源语法／字体覆盖检查冒充渲染验证。
+
+
+### 0.2.5 本次授权推送
+
+- 用户批准“推送并构建”，准确来源 88392c9a83be71d8d51457e329f8a8fc75ee10ea 已推到 zfy06011/class-her-rewrite 的 work/android-probe，远端 ref 一致；包含上一轮未推 c7b4726 结果记录。没有推私人截图／课表／密钥或 APK。
+- [Run 37593287292](https://github.com/zfy06011/class-her-rewrite/actions/runs/37593287292) 已确认 push／88392c9，当前 in_progress；继续同一任务，待原生截图、全部测试及 lint 和 APK 验证。不把推送成功当作构建或视觉通过。
+
+
+### 0.2.5 首轮云端编译失败与修复
+
+- Run 37593287292／job 112699696994 failure，源 88392c9。既有 parser／学校请求检查通过，主 Kotlin 编译失败：PixelComponents.kt 的 withTransform 转换 lambda 没有 Density 接收器，不能隐式调用 Dp.toPx；semantics 中 role 扩展未导入。此次没有实际执行 114 个测试、原生截图或完整 lint，APK／证书步骤 skipped，不存在可交付 0.2.5 APK。
+- 本地修复：在外层 DrawScope 先计算阴影偏移 px，再传给 DrawTransform；补 androidx.compose.ui.semantics.role 导入。仅修复两个 API 使用位置，不改变视觉设计、功能范围、版本、依赖或检查门槛。43 个 Kotlin 文件本地语法检查通过，不冒充 Android 编译验证。
+- 待新授权：提交上述单文件修复与结果记录，重新推 work/android-probe 后运行既定 114 测试／lint／五张原生截图与稳定签名 0.2.5-trial。授权已消费于 88392c9，修复不自动沿用。
