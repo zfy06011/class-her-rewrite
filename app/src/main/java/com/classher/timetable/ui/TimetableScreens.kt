@@ -168,7 +168,7 @@ internal fun PixelHomeContent(saved: SavedSchedule?, now: Instant, onCourse: (Oc
         item { NextLessonPanel(summary) }
         item {
             Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically, horizontalArrangement = LayoutArrangement.spacedBy(12.dp)) {
-                PixelIcon(PixelGlyph.LIST, Modifier.size(28.dp)); Text("今日课程", style = MaterialTheme.typography.headlineSmall)
+                PixelIcon(PixelGlyph.LIST, Modifier.size(32.dp)); Text("今日课程", style = MaterialTheme.typography.headlineSmall)
                 PixelRule(Modifier.weight(1f))
             }
         }
@@ -252,9 +252,10 @@ private fun SettingsScreen(state: TimetableState, model: TimetableViewModel, onI
         }
         item {
             Row(horizontalArrangement = LayoutArrangement.spacedBy(8.dp)) {
-                PixelAction("新增", PixelGlyph.PLUS, LocalCourseColors.current[3], !state.busy,
-                    { if (state.selected == null) model.openManualTerm() else model.openEditor(null) }, Modifier.weight(1f))
-                PixelAction("学校导入", PixelGlyph.SCHOOL, LocalCourseColors.current[0], !state.busy, onImport, Modifier.weight(1f))
+                PixelAction("新增", PixelGlyph.PLUS, LocalCourseColors.current[3], Modifier.weight(1f), enabled = !state.busy) {
+                    if (state.selected == null) model.openManualTerm() else model.openEditor(null)
+                }
+                PixelAction("学校导入", PixelGlyph.SCHOOL, LocalCourseColors.current[0], Modifier.weight(1f), enabled = !state.busy, onClick = onImport)
             }
             state.selected?.lastSuccessfulCheck?.let { Text("上次成功检查：${it.atZone(SchoolZone).format(DateTimeFormatter.ofPattern("MM-dd HH:mm"))}", style = MaterialTheme.typography.bodySmall) }
             Row(horizontalArrangement = LayoutArrangement.spacedBy(8.dp)) {

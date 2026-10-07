@@ -12,6 +12,7 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
@@ -62,17 +63,18 @@ internal fun PixelWeekContent(saved: SavedSchedule?, week: Int, onWeek: (Int) ->
             TextButton(onClick = { onWeek(week + 1) }, enabled = saved != null && week < saved.term.weekCount, modifier = Modifier.width(48.dp)) { Text("›", fontSize = 28.sp) }
         }
         if (saved == null) Text("在“我的”建立学期或导入课表", Modifier.padding(horizontal = 16.dp), style = MaterialTheme.typography.bodySmall)
-        BoxWithConstraints(Modifier.weight(1f).fillMaxWidth().padding(start = 6.dp, end = 10.dp, top = 8.dp, bottom = 8.dp)) {
-            val axis = 44f
+        BoxWithConstraints(Modifier.weight(1f).fillMaxWidth().padding(start = 6.dp, end = 10.dp, top = 8.dp, bottom = 8.dp).testTag("week-viewport")) {
+            val axis = 38f
             val baseWidth = ((maxWidth.value - axis) / 7).coerceAtLeast(48f)
-            val bodyHeight = (maxHeight.value - 44f).coerceAtLeast(400f)
+            // Keep the full outer frame visible; reserve room for a short lesson at day's end.
+            val bodyHeight = (maxHeight.value - 44f - MinimumCourseHeight).coerceAtLeast(400f)
             val scale = bodyHeight / (end - start)
             val days = (1..7).map { day -> weekLanes(visible.filter { it.date.dayOfWeek.value == day }, scale) }
             val widths = days.map { baseWidth * it.size.coerceAtLeast(1) }
             val width = axis + widths.sum()
             val colors = LocalCourseColors.current
             Column(Modifier.horizontalScroll(rememberScrollState()).verticalScroll(rememberScrollState())) {
-                PixelPanel(Modifier.width(width.dp), shadow = true) {
+                PixelPanel(Modifier.width(width.dp).testTag("week-grid"), shadow = true) {
                     Column {
                         Row {
                             Box(Modifier.width(axis.dp).height(44.dp), contentAlignment = Alignment.Center) { Text("时间", style = MaterialTheme.typography.labelMedium) }
@@ -83,7 +85,7 @@ internal fun PixelWeekContent(saved: SavedSchedule?, week: Int, onWeek: (Int) ->
                                 }
                             }
                         }
-                        Box(Modifier.width(width.dp).height((bodyHeight + 36f).dp)) {
+                        Box(Modifier.width(width.dp).height((bodyHeight + MinimumCourseHeight).dp)) {
                             TimeBands(start, end, scale, axis, widths, Modifier.fillMaxSize())
                             for (minute in start..end step 60) {
                                 Text("${(minute / 60).toString().padStart(2, '0')}:00", Modifier.offset(x = 6.dp, y = ((minute - start) * scale + 4).dp),
@@ -100,11 +102,11 @@ internal fun PixelWeekContent(saved: SavedSchedule?, week: Int, onWeek: (Int) ->
                                     Box(Modifier.offset(x = (left + laneIndex * baseWidth).dp, y = y.dp).width(baseWidth.dp).height(height.dp)
                                         .semantics { contentDescription = description }.clickable(role = Role.Button) { onCourse(lesson.occurrence) }) {
                                     PixelPanel(Modifier.fillMaxSize().padding(2.dp), colors[color.ordinal], shadow = false) {
-                                        Column(Modifier.padding(4.dp), verticalArrangement = LayoutArrangement.spacedBy(2.dp)) {
+                                        Column(Modifier.padding(3.dp), verticalArrangement = LayoutArrangement.spacedBy(2.dp)) {
                                             PixelIcon(PixelGlyph.BOOK, Modifier.size(10.dp))
                                             Text(lesson.occurrence.name, style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.sp, lineHeight = 11.sp),
                                                 fontWeight = FontWeight.Bold, maxLines = if (height >= 72) 3 else 2, overflow = TextOverflow.Ellipsis)
-                                            Text((if (lesson.occurrence.adjusted) "调课·" else "") + lesson.occurrence.room.ifBlank { "地点待核对" }, style = MaterialTheme.typography.labelSmall.copy(fontSize = 8.5.sp, lineHeight = 10.sp),
+                                            Text((if (lesson.occurrence.adjusted) "调课·" else "") + lesson.occurrence.room.ifBlank { "地点待核对" }, style = MaterialTheme.typography.labelSmall.copy(fontSize = 7.5.sp, lineHeight = 9.sp),
                                                 maxLines = 1, overflow = TextOverflow.Ellipsis)
                                         }
                                     }

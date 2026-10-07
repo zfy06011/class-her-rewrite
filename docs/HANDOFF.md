@@ -1,12 +1,12 @@
 # 双轨重写：当前任务交接
 
-更新：2026-10-07（0.2.5 编译通过、原有 109 测试通过；五个原生抓图用例等待超时，测试 helper 已修复，待新授权重推）。
+更新：2026-10-07（0.2.5 第三轮 114 测试和构建通过；原生截图发现暗色黑字与周表裁切，视觉修正已完成，待新授权重建）。
 
 - 当前任务：首版个人课表 MVP；本轮修复版本号显示并按用户截图更新原生 UI，学校导入／新增／检查等入口集中到我的。整体目标仍未完成。
 - 确认状态：沿用需求、原生技术栈与 AD-1～AD-12；用户已确认第 16.3 节处理决定并授权专用试用签名。用户另已确认无 ID 关联只自动匹配完全一致记录、其余手动配对。用户还确认：同学期配置完全一致、明确确认导入后可接入学校并保留所有手工课程与 UUID。继续原技术栈与 AD-1～AD-12，不提前实施跨存储恢复方案。每次推送仍需确认。
 - 当前执行者：Codex；已实测仓库读写、pwsh／Python／Node／Git，之前可读取 Actions 与下载产物。稳定签名在本机生成，Actions Secrets 通过 GitHub 页面保存并核对名称；没有安装或运行本地 JDK／Gradle／Android SDK。
 - 目标分支／本次 APK 来源：`work/android-probe`，实际来源为授权推送的 `d386c0ba79c5820fca5d79023b0e93ae93f4c72b`，远端 ref 一致。公开仓库 [zfy06011/class-her-rewrite](https://github.com/zfy06011/class-her-rewrite)。结果文档 HEAD 不代替此 APK SHA。
-- 进展：0.2.5 run 37593731880 的 Kotlin 编译及原有 109 测试通过，五个 UI 用例因 captureToImage 等待绘制帧超时而失败，无新 APK；测试抓图 helper 已修复，待单独确认重推。最近可交付仍为 0.2.4／d386c0b，109 tests／0 failures；手机真实学校更新、学期调整、可靠冷启动／6 小时检查与完整备份仍未完成。
+- 进展：779bf94 的 run 37594551094 success，114 tests／0 failures／0 ignored，五张原生截图已人工检查。发现深色黑字、390dp 周表右框裁切及图标偏小，已修正并加强原生断言，待新授权重建后最终 UI 交付。0.2.4 仍为已交付稳定候选；完整 MVP 其他未完成项保留。
 - 文档约定：本文件是唯一当前交接文档。第 8～15 节保留历史证据，当前状态以顶部与第 22 节为准。私人课表、会话、密钥及 APK 均不提交。
 
 ## 1. 已确认的首版需求
@@ -873,3 +873,22 @@ GitHub Actions 的第三方步骤固定到本轮 GitHub API 核对的提交 SHA�
 - 定位依据：自身失败栈为 WindowCapture.forceRedraw→captureRegionToImage→captureToImage，与 Robolectric 上游报告 #8071 同类；不以单个旧 issue 宣称当前环境已解决。官方 Android View.draw(Canvas) 可同步绘制视图，本轮只调整测试 helper：记住真实 Compose 的 LocalView，在测试 UI 线程用 native graphics 同步画到 ARGB Bitmap，再压 PNG；新增截图尺寸／附着状态和 ≥16 非透明颜色检查，防止空白图冒充截图。全部 5 个 UI 用例及断言保留，不跳过、不减少检查门槛，不更换业务／视觉／依赖。
 - 新方法仍是实际 Android View／Compose 绘制，非网页重绘，也非真实手机硬件 PixelCopy；原生截图是否完整和参考一致仍须下次云端运行及人工检查证明。参考：https://github.com/robolectric/robolectric/issues/8071 ，https://developer.android.com/reference/android/view/View#draw(android.graphics.Canvas) 。
 - 本地 43 个 Kotlin 语法检查通过。待单文件测试 helper 修复及本记录提交，经新授权重推后重跑 114 测试、五张 PNG、lint 和固定签名 0.2.5-trial。
+
+
+### 0.2.5 native View 抓图修复授权推送
+
+- 用户批准“推送并重建”，准确来源 779bf945e242c327d74a141b48565059473c8210 已推到 zfy06011/class-her-rewrite 的 work/android-probe，远端一致。
+- [Run 37594551094](https://github.com/zfy06011/class-her-rewrite/actions/runs/37594551094) 已确认 push／779bf94，继续同一 run；尚未把本地 helper 修复宣称截图、测试或 APK 通过。
+
+
+### 0.2.5 第三轮：构建通过，视觉检查发现需修正问题
+
+- Run 37594551094／job 112703878977 success，准确来源 779bf945e242c327d74a141b48565059473c8210。114 tests／0 failures／0 ignored，34.687s；5 个原生 UI 用例／0 failures，20.232s。五张 PNG 已生成并逐张看过，均是 Android View／Compose 的 native graphics 图，不是网页原型；实际 App 的我的页截图显示 0.2.5-trial／code6，导入入口迁移和往返测试通过。Room 1／2／3 导出逐字节一致。
+- lint 0 errors／14 warnings：原有版本／KAPT 等告警仍在，新 ModifierParameter 定位到 PixelAction（modifier 未排为首个可选参数），另有新增 ui-test-manifest 依赖版本建议。没有删除或跳过测试。
+- 固定签名 APK、provenance 与云端 apksigner 已通过；产物 14,178,708 bytes，APK SHA-256 e70eab006b327232986a1f11d645c17f0239c2165b6879d87779e3e07cc48027，versionName 0.2.5-trial／code6／debug／com.classher.timetable。尚未作为本轮最终 UI 交付，因为下面的视觉问题必须修正后重新构建。
+- APK artifact 11470401711，ZIP digest e95b16e3af0e6451ddca5573d3ce9117230fcb2b5cce20e98d15a467ddd9e3ac；诊断 artifact 11470641771，ZIP digest 66c6617f5290891bfa3ca193f9c98ee26fdf918164623989416536ca8e33e51e；下载本地 ZIP 哈希均匹配，保存在 .verify-tmp/ci-37594551094。
+- 实际截图发现：深色页透明 Scaffold 外正文继承默认黑字，日期／今日课程／周标题不可读；390dp 常规周表最小总宽略大于 viewport，右侧像素外框被裁；mdpi 底栏图标偏小；周卡教室常见字符串易截断。不能拿绿色测试声称已严格还原。
+- 本地修正：PaperBackground 统一提供主题 onBackground 内容色，保持像素 Surface 自己的 onSurface；底栏及操作图标 32dp、首页空状态留白与猫尺寸更贴近参考；时间轴改 38dp 使 390dp 常规 7×48dp 列完整同屏，重叠／窄屏仍可滚动；周卡内边距和地点字号调整，完整保留源字符串；PixelAction modifier 成为首个可选参数并更新调用。
+- 在既有 5 个 UI 用例中增加深色截图文字亮色像素检查、常规七列网格不超出 viewport 的实际布局断言；共仍 114 项，检查更严格。43 个 Kotlin 文件本地语法检查通过；新图与 APK 尚未构建，需新确认推送后验证。
+
+- 同批修正周表底框：常规布局原来始终额外超出 viewport 36dp，现从可用高度中预留短课尾部空间，使完整外框同屏；七列用例新增底边不裁切断言。小屏／大字不强压内容，仍允许滚动。

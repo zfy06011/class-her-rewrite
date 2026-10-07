@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.Arrangement as LayoutArrangement
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.draw.drawBehind
@@ -45,7 +46,10 @@ internal fun PaperBackground(modifier: Modifier = Modifier, content: @Composable
         val unit = 10.dp.toPx()
         var x = 0f; while (x < size.width) { drawLine(grid.copy(alpha = .45f), Offset(x, 0f), Offset(x, size.height), .5.dp.toPx()); x += unit }
         var y = 0f; while (y < size.height) { drawLine(grid.copy(alpha = .45f), Offset(0f, y), Offset(size.width, y), .5.dp.toPx()); y += unit }
-    }, content = content)
+    }) {
+        val boxScope = this
+        CompositionLocalProvider(LocalContentColor provides MaterialTheme.colorScheme.onBackground) { content(boxScope) }
+    }
 }
 
 @Composable
@@ -99,7 +103,7 @@ internal fun PixelNavigation(page: Int, onPage: (Int) -> Unit) {
                     Surface(color = if (page == index) LocalPaperColors.current.accent.copy(alpha = .28f) else Color.Transparent,
                         shape = androidx.compose.foundation.shape.RoundedCornerShape(28.dp)) {
                         Box(Modifier.width(76.dp).padding(vertical = 2.dp), contentAlignment = Alignment.Center) {
-                            PixelIcon(listOf(PixelGlyph.HOME, PixelGlyph.CALENDAR, PixelGlyph.PERSON)[index], Modifier.size(28.dp),
+                            PixelIcon(listOf(PixelGlyph.HOME, PixelGlyph.CALENDAR, PixelGlyph.PERSON)[index], Modifier.size(32.dp),
                                 ink = if (page == index) LocalPaperColors.current.ink else MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                     }
@@ -111,12 +115,12 @@ internal fun PixelNavigation(page: Int, onPage: (Int) -> Unit) {
 }
 
 @Composable
-internal fun PixelAction(label: String, glyph: PixelGlyph, color: Color, enabled: Boolean = true, onClick: () -> Unit, modifier: Modifier = Modifier) {
+internal fun PixelAction(label: String, glyph: PixelGlyph, color: Color, modifier: Modifier = Modifier, enabled: Boolean = true, onClick: () -> Unit) {
     // M3 Surface supplies ripple and button semantics; disabled actions remain noninteractive.
     PixelPanel(modifier.alphaFor(enabled).semantics(mergeDescendants = true) { role = Role.Button; if (!enabled) disabled() }, color, onClick = if (enabled) onClick else null) {
         Row(Modifier.heightIn(min = 48.dp).padding(horizontal = 12.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = LayoutArrangement.spacedBy(8.dp)) {
-            PixelIcon(glyph, Modifier.size(24.dp)); Text(label, style = MaterialTheme.typography.titleSmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            PixelIcon(glyph, Modifier.size(32.dp)); Text(label, style = MaterialTheme.typography.titleSmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
         }
     }
 }
@@ -183,11 +187,11 @@ internal fun EmptyToday(hasTerm: Boolean) {
     Box(Modifier.fillMaxWidth().drawBehind {
         drawRoundRect(ink, style = androidx.compose.ui.graphics.drawscope.Stroke(1.3.dp.toPx(), pathEffect = PathEffect.dashPathEffect(floatArrayOf(3.dp.toPx(), 2.dp.toPx()))),
             cornerRadius = androidx.compose.ui.geometry.CornerRadius(8.dp.toPx()))
-    }.padding(20.dp)) {
+    }.padding(16.dp)) {
         Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = LayoutArrangement.spacedBy(12.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Canvas(Modifier.size(28.dp)) { pixelCross(pink, Offset.Zero, 3.dp.toPx()) }
-                SleepingCat(Modifier.size(128.dp, 80.dp))
+                SleepingCat(Modifier.size(104.dp, 64.dp))
                 Canvas(Modifier.size(28.dp)) { pixelCross(pink, Offset(size.width / 2, size.height / 2), 2.dp.toPx()) }
             }
             Text("今天没有课程，好好安排自己的时间。", style = MaterialTheme.typography.titleSmall)

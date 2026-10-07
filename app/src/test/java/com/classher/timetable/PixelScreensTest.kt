@@ -85,6 +85,18 @@ class PixelScreensTest {
         val folder = File("build/ui-previews"); folder.mkdirs()
         File(folder, "$name.png").outputStream().use { assertTrue(image.compress(Bitmap.CompressFormat.PNG, 100, it)) }
     }
+    private fun assertBrightTextInDarkCapture(name: String, text: String) {
+        val image = android.graphics.BitmapFactory.decodeFile("build/ui-previews/$name.png")
+        val bounds = compose.onNodeWithText(text).fetchSemanticsNode().boundsInRoot
+        var bright = 0
+        for (y in bounds.top.toInt().coerceAtLeast(0) until bounds.bottom.toInt().coerceAtMost(image.height)) {
+            for (x in bounds.left.toInt().coerceAtLeast(0) until bounds.right.toInt().coerceAtMost(image.width)) {
+                val pixel = image.getPixel(x, y)
+                if (android.graphics.Color.red(pixel) > 160 && android.graphics.Color.green(pixel) > 160 && android.graphics.Color.blue(pixel) > 160) bright++
+            }
+        }
+        assertTrue("Dark page heading must contain readable light foreground pixels", bright > 12)
+    }
     @After fun close() { models.clear(); database?.close() }
 
     @Test fun emptyTodayAndNextLessonUseRealDatesAndHaveNoImportButtons() {
@@ -104,12 +116,19 @@ class PixelScreensTest {
         compose.onNodeWithText("已结束").assertExists()
         compose.onNodeWithText("学校导入").assertDoesNotExist()
         screenshot("home-courses-dark-large-text")
+        assertBrightTextInDarkCapture("home-courses-dark-large-text", "今日课程")
+        assertBrightTextInDarkCapture("home-courses-dark-large-text", "今天也按自己的节奏")
     }
     @Test fun weekShowsSevenDaysAndCourseTapRetainsOriginalDate() {
         val courses = (0..6).map { course(it, it + 1, if (it % 2 == 0) setOf(1, 2) else setOf(5, 6)) }
         var selected: Occurrence? = null
         frame(page = 1) { PixelWeekContent(fixture(courses), 4, {}, { selected = it }, today = LocalDate.parse("2026-10-05")) }
         compose.onNodeWithText("周日").assertExists()
+        compose.onNodeWithText("周日").assertIsDisplayed()
+        val gridBounds = compose.onNodeWithTag("week-grid").getUnclippedBoundsInRoot()
+        val viewportBounds = compose.onNodeWithTag("week-viewport").getUnclippedBoundsInRoot()
+        assertTrue("Seven-day grid must fit the normal viewport without clipping its right border", gridBounds.right <= viewportBounds.right)
+        assertTrue("Normal week grid must not clip its bottom border", gridBounds.bottom <= viewportBounds.bottom)
         val target = compose.onNodeWithText("合成课程1").fetchSemanticsNode().boundsInRoot
         assertTrue(target.width >= 48f && target.height >= 48f)
         compose.onNodeWithText("合成课程1").performClick()
@@ -123,6 +142,7 @@ class PixelScreensTest {
         compose.onAllNodesWithText("合成课程1").assertCountEquals(2)
         compose.onNodeWithText("合成课程2").assertExists()
         screenshot("week-overlap-dark")
+        assertBrightTextInDarkCapture("week-overlap-dark", "第 4 教学周")
     }
     @Test fun actualAppMovesActionsToMineAndShowsBuildVersion() {
         val context = ApplicationProvider.getApplicationContext<Application>()
