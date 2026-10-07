@@ -125,16 +125,16 @@ class PixelScreensTest {
         frame(page = 1) { PixelWeekContent(fixture(courses), 4, {}, { selected = it }, today = LocalDate.parse("2026-10-05")) }
         compose.onNodeWithText("周日").assertExists()
         compose.onNodeWithText("周日").assertIsDisplayed()
+        screenshot("week-seven-days-light")
         val gridBounds = compose.onNodeWithTag("week-grid").getUnclippedBoundsInRoot()
         val viewportBounds = compose.onNodeWithTag("week-viewport").getUnclippedBoundsInRoot()
         assertTrue("Seven-day grid must fit the normal viewport without clipping its right border", gridBounds.right <= viewportBounds.right)
-        assertTrue("Normal week grid must not clip its bottom border", gridBounds.bottom <= viewportBounds.bottom)
+        assertTrue("Normal week grid must not clip its bottom border: grid=$gridBounds, viewport=$viewportBounds", gridBounds.bottom <= viewportBounds.bottom)
         val target = compose.onNodeWithText("合成课程1").fetchSemanticsNode().boundsInRoot
         assertTrue(target.width >= 48f && target.height >= 48f)
         compose.onNodeWithText("合成课程1").performClick()
         assertEquals(courses.first().id, selected!!.arrangementId)
         assertEquals(LocalDate.parse("2026-10-05"), selected!!.originalDate)
-        screenshot("week-seven-days-light")
     }
     @Test fun weekOverlapAndNonAdjacentPeriodsKeepEveryCourseSegment() {
         val courses = listOf(course(0, 1, setOf(1, 2, 5)), course(1, 1), course(2, 7))

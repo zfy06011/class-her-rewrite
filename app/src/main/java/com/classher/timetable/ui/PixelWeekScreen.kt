@@ -67,7 +67,7 @@ internal fun PixelWeekContent(saved: SavedSchedule?, week: Int, onWeek: (Int) ->
             val axis = 38f
             val baseWidth = ((maxWidth.value - axis) / 7).coerceAtLeast(48f)
             // Keep the full outer frame visible; reserve room for a short lesson at day's end.
-            val bodyHeight = (maxHeight.value - 44f - MinimumCourseHeight).coerceAtLeast(400f)
+            val bodyHeight = (maxHeight.value - 44f - MinimumCourseHeight).coerceAtLeast(360f)
             val scale = bodyHeight / (end - start)
             val days = (1..7).map { day -> weekLanes(visible.filter { it.date.dayOfWeek.value == day }, scale) }
             val widths = days.map { baseWidth * it.size.coerceAtLeast(1) }
@@ -104,9 +104,9 @@ internal fun PixelWeekContent(saved: SavedSchedule?, week: Int, onWeek: (Int) ->
                                     PixelPanel(Modifier.fillMaxSize().padding(2.dp), colors[color.ordinal], shadow = false) {
                                         Column(Modifier.padding(3.dp), verticalArrangement = LayoutArrangement.spacedBy(2.dp)) {
                                             PixelIcon(PixelGlyph.BOOK, Modifier.size(10.dp))
-                                            Text(lesson.occurrence.name, style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.sp, lineHeight = 11.sp),
+                                            Text(lesson.occurrence.name, style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.sp, lineHeight = 11.sp, letterSpacing = 0.sp),
                                                 fontWeight = FontWeight.Bold, maxLines = if (height >= 72) 3 else 2, overflow = TextOverflow.Ellipsis)
-                                            Text((if (lesson.occurrence.adjusted) "调课·" else "") + lesson.occurrence.room.ifBlank { "地点待核对" }, style = MaterialTheme.typography.labelSmall.copy(fontSize = 7.5.sp, lineHeight = 9.sp),
+                                            Text((if (lesson.occurrence.adjusted) "调课·" else "") + lesson.occurrence.room.ifBlank { "地点待核对" }, style = MaterialTheme.typography.labelSmall.copy(fontSize = 7.5.sp, lineHeight = 9.sp, letterSpacing = 0.sp),
                                                 maxLines = 1, overflow = TextOverflow.Ellipsis)
                                         }
                                     }
